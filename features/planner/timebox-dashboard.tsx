@@ -39,7 +39,8 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { usePlannerStore } from "./store";
+import { createClient } from "@/lib/supabase/client";
+import { PlannerStoreProvider, usePlannerStore, type PlannerSeed } from "./store";
 import type { Task, TimeBlock } from "./types";
 
 const DAY_START = 8 * 60;
@@ -395,6 +396,7 @@ function FocusPanel() {
   const setJournal = usePlannerStore((state) => state.setJournal);
   const mood = usePlannerStore((state) => state.mood);
   const setMood = usePlannerStore((state) => state.setMood);
+  const saveJournal = usePlannerStore((state) => state.saveJournal);
   const [tab, setTab] = useState<"focus" | "review">("focus");
   const [timerRunning, setTimerRunning] = useState(false);
 
@@ -520,7 +522,7 @@ function FocusPanel() {
             <button><MessageCircle size={16} /> 방해받은 순간</button>
             <button><Target size={16} /> 내일의 첫 행동</button>
           </div>
-          <button className="save-review-button"><Check size={17} /> 오늘 회고 저장</button>
+          <button className="save-review-button" onClick={saveJournal}><Check size={17} /> 오늘 회고 저장</button>
         </div>
       )}
     </aside>
@@ -563,7 +565,7 @@ function MobileNav() {
   );
 }
 
-export function TimeboxDashboard({
+function TimeboxDashboardInner({
   todayLabel,
   currentMinutes,
 }: {
@@ -575,6 +577,7 @@ export function TimeboxDashboard({
   const mobileView = usePlannerStore((state) => state.mobileView);
   const notice = usePlannerStore((state) => state.notice);
   const setNotice = usePlannerStore((state) => state.setNotice);
+  const userId = usePlannerStore((state) => state.userId);
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -607,6 +610,16 @@ export function TimeboxDashboard({
     }
   };
 
+  const signOut = async () => {
+    if (!userId) {
+      setNotice("데모 모드에서는 로그아웃할 계정이 없어요.");
+      return;
+    }
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  };
+
   return (
     <DragDropProvider onDragEnd={handleDragEnd}>
       <div className="app-shell">
@@ -620,7 +633,7 @@ export function TimeboxDashboard({
             <button className="icon-button mobile-menu" aria-label="메뉴"><Menu size={19} /></button>
             <button className="share-button" onClick={shareSchedule}><Copy size={16} /> 일정 공유</button>
             <button className="icon-button" aria-label="설정"><Settings size={18} /></button>
-            <button className="avatar-button" aria-label="프로필">J</button>
+            <button className="avatar-button" aria-label="로그아웃" title="로그아웃" onClick={signOut}>J</button>
           </div>
         </header>
 
@@ -651,5 +664,21 @@ export function TimeboxDashboard({
         </DragOverlay>
       </div>
     </DragDropProvider>
+  );
+}
+
+export function TimeboxDashboard({
+  todayLabel,
+  currentMinutes,
+  seed,
+}: {
+  todayLabel: string;
+  currentMinutes: number;
+  seed: PlannerSeed;
+}) {
+  return (
+    <PlannerStoreProvider seed={seed}>
+      <TimeboxDashboardInner todayLabel={todayLabel} currentMinutes={currentMinutes} />
+    </PlannerStoreProvider>
   );
 }

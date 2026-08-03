@@ -111,6 +111,18 @@ function shiftMonth(month: string, offset: number) {
   return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+function monthCalendarDates(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const firstWeekday = (new Date(Date.UTC(year, monthNumber - 1, 1)).getUTCDay() + 6) % 7;
+  const dayCount = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const dates: Array<string | null> = Array.from({ length: firstWeekday }, () => null);
+  for (let day = 1; day <= dayCount; day += 1) {
+    dates.push(`${month}-${String(day).padStart(2, "0")}`);
+  }
+  while (dates.length % 7) dates.push(null);
+  return dates;
+}
+
 function Logo() {
   return (
     <div className="paper-brand" aria-label="Timebox 홈">
@@ -511,6 +523,41 @@ function activityIcon(kind: ActivityKind) {
   return <CheckCircle2 size={15} />;
 }
 
+function MonthHistory({
+  month,
+  days,
+  today,
+  onOpen,
+}: {
+  month: string;
+  days: RecordBundle["days"];
+  today: string;
+  onOpen: (date: string) => void;
+}) {
+  const dayByDate = new Map(days.map((day) => [day.date, day]));
+  return (
+    <div className="month-history">
+      <div className="month-weekdays" aria-hidden="true">{["월", "화", "수", "목", "금", "토", "일"].map((weekday) => <span key={weekday}>{weekday}</span>)}</div>
+      <div className="month-days">
+        {monthCalendarDates(month).map((date, index) => {
+          if (!date) return <span className="month-day-empty" key={`empty-${index}`} />;
+          const day = dayByDate.get(date);
+          const completion = day?.totalBlocks ? Math.round(day.completedBlocks / day.totalBlocks * 100) : 0;
+          if (!day) return <span className="month-day" data-future={date > today} key={date}><time>{Number(date.slice(-2))}</time></span>;
+          return (
+            <button className="month-day" data-today={date === today} onClick={() => onOpen(date)} aria-label={`${dateLabel(date)} 일정 열기`} key={date}>
+              <time>{Number(date.slice(-2))}</time>
+              <strong>{completion}%</strong>
+              <i><span style={{ width: `${completion}%` }} /></i>
+              <small>{day.journal.trim() && <BookOpenText size={10} />}{day.mood ? <b>{day.mood}</b> : null}</small>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journal: string, mood: number): RecordBundle {
   const tagMinutes = new Map<string, { plannedMinutes: number; actualMinutes: number }>();
   for (const block of blocks) {
@@ -657,7 +704,7 @@ function RecordsView({
           </section>
           <div className="summary-grid">
             <section className="record-card"><header><div><Tag size={16} /><strong>태그별 계획·실제 시간</strong></div><small>실제 / 계획</small></header><div className="tag-bars">{tagTotals.length ? tagTotals.map(([tag, minutes]) => <div key={tag}><span>{tag}</span><i><b data-kind="planned" style={{ width: `${minutes.plannedMinutes / maxTag * 100}%` }} /><b data-kind="actual" style={{ width: `${minutes.actualMinutes / maxTag * 100}%` }} /></i><strong>{formatDuration(minutes.actualMinutes)}<small>/ {formatDuration(minutes.plannedMinutes)}</small></strong></div>) : <p className="no-records">아직 태그별 기록이 없어요.</p>}</div></section>
-            <section className="record-card"><header><div><CalendarDays size={16} /><strong>날짜별 흐름</strong></div><small>최근 기록</small></header><div className="day-history">{days.length ? days.slice(0, 12).map((day) => <button key={day.date} onClick={() => onOpenRecord(day.date, "today")} aria-label={`${dateLabel(day.date)} 일정 열기`}><time>{dateLabel(day.date)}</time><div><span style={{ width: `${day.totalBlocks ? day.completedBlocks / day.totalBlocks * 100 : 0}%` }} /></div><strong>{day.totalBlocks ? Math.round(day.completedBlocks / day.totalBlocks * 100) : 0}%</strong>{day.journal && <BookOpenText size={13} />}<ChevronRight size={12} /></button>) : <p className="no-records">아직 날짜별 기록이 없어요.</p>}</div></section>
+            <section className="record-card"><header><div><CalendarDays size={16} /><strong>{period === "month" ? "월간 기록 달력" : "날짜별 흐름"}</strong></div><small>{period === "month" ? monthLabel(selectedMonth) : "최근 기록"}</small></header>{period === "month" ? <MonthHistory month={selectedMonth} days={days} today={today} onOpen={(date) => onOpenRecord(date, "today")} /> : <div className="day-history">{days.length ? days.slice(0, 12).map((day) => <button key={day.date} onClick={() => onOpenRecord(day.date, "today")} aria-label={`${dateLabel(day.date)} 일정 열기`}><time>{dateLabel(day.date)}</time><div><span style={{ width: `${day.totalBlocks ? day.completedBlocks / day.totalBlocks * 100 : 0}%` }} /></div><strong>{day.totalBlocks ? Math.round(day.completedBlocks / day.totalBlocks * 100) : 0}%</strong>{day.journal && <BookOpenText size={13} />}<ChevronRight size={12} /></button>) : <p className="no-records">아직 날짜별 기록이 없어요.</p>}</div>}</section>
           </div>
         </div>
       )}

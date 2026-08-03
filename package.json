@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:types": "supabase gen types typescript --local > types/database.generated.ts"
   },
@@ -33,7 +34,8 @@
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.12",
     "tailwindcss": "4.2.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
   },
   "overrides": {
     "postcss": "8.5.25",

@@ -112,10 +112,13 @@ supabase/scripts/             필요할 때만 실행하는 운영·초기화 SQ
 
 ```bash
 npm run typecheck
+npm test
 npm run lint
 npm run build
 npm audit --audit-level=high
 ```
+
+`npm test`는 Vitest로 일정 배치, 15분 이동, 중복·겹침 방지, 블록 크기와 작업 예상 시간 동기화, 확정 후 변경 이유, 핵심 업무 제한을 검사합니다. 개발 중 테스트를 계속 실행하려면 `npm run test:watch`를 사용합니다.
 
 배포 전에는 로그인, 날짜 이동, 계획 확정, 중간 일정 조정, 오늘 일과 완료, 최종 차이 기록, 일기 저장, 기록 조회, 공유 링크를 실제 Supabase 계정으로 한 번씩 확인합니다.
 

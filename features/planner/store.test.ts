@@ -56,6 +56,27 @@ function seed({
 }
 
 describe("일정 배치", () => {
+  it("자정 이후 00시 30분부터 01시까지 작업을 배치할 수 있다", () => {
+    const lateTask = task("task-late", 30);
+    const store = createPlannerStore(seed({ tasks: [lateTask] }));
+
+    store.getState().scheduleTask(lateTask.id, 24 * 60 + 30);
+
+    expect(store.getState().blocks[0]).toMatchObject({
+      start: 24 * 60 + 30,
+      duration: 30,
+    });
+  });
+
+  it("작업이 다음 날 오전 1시를 넘어가지는 않게 한다", () => {
+    const lateTask = task("task-late", 30);
+    const store = createPlannerStore(seed({ tasks: [lateTask] }));
+
+    store.getState().scheduleTask(lateTask.id, 25 * 60);
+
+    expect(store.getState().blocks[0]?.start).toBe(24 * 60 + 30);
+  });
+
   it("빈 시간표에는 설정한 기상 시간부터 작업을 자동 배치한다", () => {
     const store = createPlannerStore(seed());
 

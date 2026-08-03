@@ -22,6 +22,7 @@ import {
   persistTaskUpdate,
 } from "./persistence";
 import { colorForTag, normalizeTagName, tagSuggestions } from "./tag-utils";
+import { PLAN_END_MINUTES } from "./planner-time";
 import type { MobileView, PlanStatus, TagName, Task, TimeBlock } from "./types";
 
 export type PlannerSeed = {
@@ -113,11 +114,11 @@ function validDayStartHour(hour: number) {
 function nextAvailableStart(blocks: TimeBlock[], duration: number, dayStartHour: number) {
   const dayStart = validDayStartHour(dayStartHour) * 60;
   let cursor = dayStart;
-  while (cursor + duration <= 24 * 60) {
+  while (cursor + duration <= PLAN_END_MINUTES) {
     if (!overlaps(blocks, cursor, duration)) return cursor;
     cursor += 15;
   }
-  return Math.max(dayStart, 24 * 60 - duration);
+  return Math.max(dayStart, PLAN_END_MINUTES - duration);
 }
 
 function cloneSeed(seed: PlannerSeed): PlannerSeed {
@@ -213,7 +214,7 @@ export function createPlannerStore(seed: PlannerSeed) {
           set({ notice: "확정 후 예상 시간을 바꾸려면 변경 이유가 필요해요." });
           return false;
         }
-        const safeEstimate = Math.max(15, Math.min(Math.round(patch.estimate / 15) * 15, linkedBlock ? 24 * 60 - linkedBlock.start : 480));
+        const safeEstimate = Math.max(15, Math.min(Math.round(patch.estimate / 15) * 15, linkedBlock ? PLAN_END_MINUTES - linkedBlock.start : 480));
         if (linkedBlock && estimateChanged && overlaps(state.blocks, linkedBlock.start, safeEstimate, linkedBlock.id)) {
           set({ notice: "다음 일정과 겹쳐서 예상 시간을 바꿀 수 없어요." });
           return false;
@@ -299,7 +300,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         }
         const block: TimeBlock = {
           id: crypto.randomUUID(), taskId: task.id, title: task.title,
-          start: Math.max(state.dayStartHour * 60, Math.min(desiredStart, 24 * 60 - duration)),
+          start: Math.max(state.dayStartHour * 60, Math.min(desiredStart, PLAN_END_MINUTES - duration)),
           duration, type: "task", color: task.color, status: "scheduled",
           changeReasons: state.planStatus === "committed" ? { created: reason?.trim() } : undefined,
         };
@@ -322,7 +323,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
-        const safeStart = Math.max(state.dayStartHour * 60, Math.min(start, 24 * 60 - block.duration));
+        const safeStart = Math.max(state.dayStartHour * 60, Math.min(start, PLAN_END_MINUTES - block.duration));
         if (overlaps(state.blocks, safeStart, block.duration, blockId)) {
           set({ notice: "다른 일정과 겹칠 수 없어요. 빈 시간으로 옮겨 주세요." });
           return;
@@ -341,7 +342,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
         const snapped = Math.round(duration / 15) * 15;
-        const safeDuration = Math.max(15, Math.min(snapped, 24 * 60 - block.start));
+        const safeDuration = Math.max(15, Math.min(snapped, PLAN_END_MINUTES - block.start));
         if (overlaps(state.blocks, block.start, safeDuration, blockId)) return;
         set({
           blocks: state.blocks.map((item) => item.id === blockId ? { ...item, duration: safeDuration } : item),
@@ -372,7 +373,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         }
         const previousDuration = originalDuration ?? block.duration;
         const snapped = Math.round(duration / 15) * 15;
-        const safeDuration = Math.max(15, Math.min(snapped, 24 * 60 - block.start));
+        const safeDuration = Math.max(15, Math.min(snapped, PLAN_END_MINUTES - block.start));
         if (overlaps(state.blocks, block.start, safeDuration, blockId)) {
           set({
             blocks: state.blocks.map((item) => item.id === blockId ? { ...item, duration: previousDuration } : item),
@@ -481,7 +482,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
         const bufferStart = block.start + block.duration;
-        if (bufferStart + 15 > 24 * 60 || overlaps(state.blocks, bufferStart, 15)) {
+        if (bufferStart + 15 > PLAN_END_MINUTES || overlaps(state.blocks, bufferStart, 15)) {
           set({ notice: "바로 뒤에 15분 버퍼를 넣을 빈 시간이 없어요." });
           return;
         }

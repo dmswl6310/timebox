@@ -1,6 +1,7 @@
 "use client";
 
 import { createClient } from "@/lib/supabase/client";
+import { planMinuteToIso } from "./planner-time";
 import type { Task, TimeBlock } from "./types";
 
 type PersistenceContext = {
@@ -10,11 +11,7 @@ type PersistenceContext = {
   timezone: string;
 };
 
-function toIso(planDate: string, minutes: number) {
-  const hours = Math.floor(minutes / 60).toString().padStart(2, "0");
-  const mins = (minutes % 60).toString().padStart(2, "0");
-  return new Date(`${planDate}T${hours}:${mins}:00+09:00`).toISOString();
-}
+const toIso = planMinuteToIso;
 
 function dbStatus(status: TimeBlock["status"]) {
   if (status === "running") return "in_progress";

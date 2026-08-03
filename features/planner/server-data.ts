@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { dateInTimeZone } from "@/lib/date";
 import type { PlannerSeed } from "./store";
 import { normalizeTagName, savedTagColor, tagSuggestions } from "./tag-utils";
+import { minutesInPlanDay } from "./planner-time";
 import type { Task, TimeBlock } from "./types";
 
 type TaskRow = {
@@ -31,18 +32,6 @@ type SessionRow = {
   started_at: string;
   ended_at: string | null;
 };
-
-function minutesInZone(iso: string, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date(iso));
-  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0) % 24;
-  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
-  return hour * 60 + minute;
-}
 
 function energyLabel(value: number | null): Task["energy"] {
   if ((value ?? 3) <= 2) return "낮음";
@@ -224,7 +213,7 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
       id: row.id,
       taskId: row.task_id ?? undefined,
       title: row.title,
-      start: minutesInZone(row.planned_start, plan.timezone),
+      start: minutesInPlanDay(row.planned_start, plan.timezone, planDate),
       duration: Math.max(
         15,
         Math.round(
@@ -232,7 +221,7 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
         ),
       ),
       baselineStart: row.baseline_start
-        ? minutesInZone(row.baseline_start, plan.timezone)
+        ? minutesInPlanDay(row.baseline_start, plan.timezone, planDate)
         : undefined,
       baselineDuration: row.baseline_start && row.baseline_end
         ? Math.max(

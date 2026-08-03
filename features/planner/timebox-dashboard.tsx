@@ -45,10 +45,10 @@ import { createContext, FormEvent, useContext, useEffect, useRef, useState, useS
 import { createClient } from "@/lib/supabase/client";
 import { loadRecordBundle, type ActivityKind, type RecordBundle } from "./records-data";
 import { PlannerStoreProvider, usePlannerStore, type PlannerSeed } from "./store";
+import { formatPlanTime, PLAN_END_HOUR } from "./planner-time";
 import { tagSuggestions } from "./tag-utils";
 import type { TagName, Task, TimeBlock } from "./types";
 
-const DAY_END_HOUR = 24;
 const ESTIMATE_OPTIONS = [15, 30, 45, 60, 90, 120, 180] as const;
 const DAY_START_OPTIONS = [5, 6, 7, 8, 9, 10, 11, 12] as const;
 const MOODS = ["매우 힘듦", "힘듦", "보통", "좋음", "아주 좋음"];
@@ -102,9 +102,7 @@ function getServiceModeSnapshot(): ServiceMode {
 }
 
 function formatTime(totalMinutes: number) {
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  return formatPlanTime(totalMinutes);
 }
 
 function formatDuration(minutes: number) {
@@ -514,7 +512,7 @@ function Timetable({ resolution }: { resolution: 15 | 30 }) {
   const dayStartHour = usePlannerStore((state) => state.dayStartHour);
   const earliestBlockHour = blocks.length ? Math.floor(Math.min(...blocks.map((block) => block.start)) / 60) : dayStartHour;
   const visibleStartHour = Math.min(dayStartHour, earliestBlockHour);
-  const hours = Array.from({ length: DAY_END_HOUR - visibleStartHour }, (_, index) => visibleStartHour + index);
+  const hours = Array.from({ length: PLAN_END_HOUR - visibleStartHour }, (_, index) => visibleStartHour + index);
   return (
     <section className="paper-section timetable-section">
       <div className="time-head">
@@ -537,6 +535,7 @@ function Timetable({ resolution }: { resolution: 15 | 30 }) {
           );
         })}
       </div>
+      <div className="timetable-end"><time dateTime="01:00">1</time><span>다음 날 01:00 · 일정표 끝</span></div>
     </section>
   );
 }

@@ -10,10 +10,10 @@ import {
   persistBlockCompletion,
   persistBlockCreate,
   persistBlockMove,
+  persistPlanClose,
   persistPlanCommit,
   persistPriorities,
   persistReflection,
-  persistScheduleChange,
   persistTaskCreate,
   persistTaskDiscard,
   persistTaskEstimate,
@@ -97,6 +97,7 @@ export type PlannerState = PlannerSeed & {
   setMood: (value: number) => void;
   saveJournal: (silent?: boolean) => void;
   confirmPlan: () => void;
+  closePlan: () => void;
   setNotice: (value: string | null) => void;
 };
 
@@ -134,11 +135,12 @@ export function createPlannerStore(seed: PlannerSeed) {
         timezone: state.timezone,
       };
     };
+    const pendingWrites = new Set<Promise<void>>();
     const save = (promise: Promise<void>) => {
-      void promise.catch(() => set({ notice: "저장하지 못했어요. 연결을 확인해 주세요." }));
-    };
-    const track = (promise: Promise<void>) => {
-      void promise.catch(() => undefined);
+      const pending = promise
+        .catch(() => set({ notice: "저장하지 못했어요. 연결을 확인해 주세요." }))
+        .finally(() => pendingWrites.delete(pending));
+      pendingWrites.add(pending);
     };
 
     return {
@@ -173,17 +175,23 @@ export function createPlannerStore(seed: PlannerSeed) {
         };
         set({
           tasks: state.tasks.map((task) => task.id === taskId ? nextTask : task),
-          blocks: state.blocks.map((block) => block.taskId === taskId
-            ? { ...block, title: nextTask.title, color: nextTask.color }
-            : block),
+          blocks: state.planStatus === "closed"
+            ? state.blocks
+            : state.blocks.map((block) => block.taskId === taskId
+              ? { ...block, title: nextTask.title, color: nextTask.color }
+              : block),
           notice: "할 일 정보를 바꿨어요.",
         });
         const ctx = context();
-        if (ctx) save(persistTaskUpdate(ctx, nextTask));
+        if (ctx) save(persistTaskUpdate(ctx, nextTask, state.planStatus !== "closed"));
       },
 
       toggleMit: (taskId) => {
         const state = get();
+        if (state.planStatus === "closed") {
+          set({ notice: "오늘 일과를 완료한 뒤에는 오늘의 우선순위를 바꿀 수 없어요." });
+          return;
+        }
         const target = state.tasks.find((task) => task.id === taskId);
         if (!target) return;
         if (!target.isMit && state.tasks.filter((task) => task.isMit && !task.completed).length >= 3) {
@@ -198,6 +206,10 @@ export function createPlannerStore(seed: PlannerSeed) {
 
       scheduleTask: (taskId, requestedStart) => {
         const state = get();
+        if (state.planStatus === "closed") {
+          set({ notice: "오늘 일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          return;
+        }
         const task = state.tasks.find((item) => item.id === taskId);
         if (!task) return;
         if (state.blocks.some((block) => block.taskId === taskId)) {
@@ -219,18 +231,15 @@ export function createPlannerStore(seed: PlannerSeed) {
         const ctx = context();
         if (ctx) {
           save(persistBlockCreate(ctx, block));
-          if (state.planStatus !== "draft") {
-            track(persistScheduleChange(ctx, {
-              blockId: block.id,
-              type: "created",
-              after: { start: block.start, duration: block.duration, title: block.title },
-            }));
-          }
         }
       },
 
       moveBlock: (blockId, start) => {
         const state = get();
+        if (state.planStatus === "closed") {
+          set({ notice: "오늘 일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          return;
+        }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
         const safeStart = Math.max(5 * 60, Math.min(start, 24 * 60 - block.duration));
@@ -242,19 +251,12 @@ export function createPlannerStore(seed: PlannerSeed) {
         const ctx = context();
         if (ctx) {
           save(persistBlockMove(ctx, blockId, safeStart, block.duration));
-          if (state.planStatus !== "draft" && block.start !== safeStart) {
-            track(persistScheduleChange(ctx, {
-              blockId,
-              type: "moved",
-              before: { start: block.start, duration: block.duration },
-              after: { start: safeStart, duration: block.duration },
-            }));
-          }
         }
       },
 
       previewResizeBlock: (blockId, duration) => {
         const state = get();
+        if (state.planStatus === "closed") return;
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
         const snapped = Math.round(duration / 15) * 15;
@@ -271,6 +273,10 @@ export function createPlannerStore(seed: PlannerSeed) {
 
       resizeBlock: (blockId, duration, originalDuration) => {
         const state = get();
+        if (state.planStatus === "closed") {
+          set({ notice: "오늘 일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          return;
+        }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
         const previousDuration = originalDuration ?? block.duration;
@@ -300,28 +306,24 @@ export function createPlannerStore(seed: PlannerSeed) {
         if (ctx) {
           save(persistBlockMove(ctx, blockId, block.start, safeDuration));
           if (block.taskId) save(persistTaskEstimate(ctx, block.taskId, safeDuration));
-          if (state.planStatus !== "draft" && previousDuration !== safeDuration) {
-            track(persistScheduleChange(ctx, {
-              blockId,
-              type: "resized",
-              before: { start: block.start, duration: previousDuration },
-              after: { start: block.start, duration: safeDuration },
-            }));
-          }
         }
       },
 
       removeBlock: (blockId) => {
         const state = get();
+        if (state.planStatus === "closed") {
+          set({ notice: "오늘 일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          return;
+        }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
         const blocks = state.blocks.filter((item) => item.id !== blockId);
-        const isCommittedChange = state.planStatus !== "draft";
+        const isCommittedChange = state.planStatus === "committed";
         set({
           blocks,
           selectedBlockId: blocks[0]?.id ?? null,
           notice: isCommittedChange
-            ? "타임블록을 삭제하고 변경 기록에 남겼어요."
+            ? "시간표에서 뺐어요. 오늘 일과를 완료하면 최종 차이에 반영돼요."
             : block.taskId
               ? "시간표에서 뺐어요. 작업은 브레인덤프에 남아 있어요."
               : "타임블록을 삭제했어요.",
@@ -329,20 +331,6 @@ export function createPlannerStore(seed: PlannerSeed) {
         const ctx = context();
         if (ctx) {
           save(persistBlockCancel(ctx, blockId));
-          if (isCommittedChange) {
-            track(persistScheduleChange(ctx, {
-              blockId,
-              type: "cancelled",
-              before: {
-                title: block.title,
-                taskId: block.taskId ?? null,
-                start: block.start,
-                duration: block.duration,
-                status: block.status,
-              },
-              after: { status: "cancelled" },
-            }));
-          }
         }
       },
 
@@ -350,6 +338,10 @@ export function createPlannerStore(seed: PlannerSeed) {
 
       toggleBlockComplete: (blockId) => {
         const state = get();
+        if (state.planStatus === "closed") {
+          set({ notice: "오늘 일과를 완료한 뒤에는 완료 상태를 바꿀 수 없어요." });
+          return;
+        }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
         const completed = block.status !== "completed";
@@ -361,19 +353,15 @@ export function createPlannerStore(seed: PlannerSeed) {
         const ctx = context();
         if (ctx) {
           save(persistBlockCompletion(ctx, block, completed));
-          if (state.planStatus !== "draft") {
-            track(persistScheduleChange(ctx, {
-              blockId,
-              type: completed ? "completed" : "reopened",
-              before: { status: block.status },
-              after: { status: completed ? "completed" : "scheduled" },
-            }));
-          }
         }
       },
 
       updateActualMinutes: (blockId, minutes) => {
         const state = get();
+        if (state.planStatus === "closed") {
+          set({ notice: "오늘 일과를 완료한 뒤에는 실제 시간을 바꿀 수 없어요." });
+          return;
+        }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
         const actualMinutes = Math.max(5, Math.min(minutes, 480));
@@ -384,6 +372,10 @@ export function createPlannerStore(seed: PlannerSeed) {
 
       addBufferAfter: (blockId) => {
         const state = get();
+        if (state.planStatus === "closed") {
+          set({ notice: "오늘 일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          return;
+        }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
         const bufferStart = block.start + block.duration;
@@ -396,13 +388,6 @@ export function createPlannerStore(seed: PlannerSeed) {
         const ctx = context();
         if (ctx) {
           save(persistBlockCreate(ctx, buffer));
-          if (state.planStatus !== "draft") {
-            track(persistScheduleChange(ctx, {
-              blockId: buffer.id,
-              type: "created",
-              after: { start: buffer.start, duration: buffer.duration, title: buffer.title },
-            }));
-          }
         }
       },
 
@@ -424,7 +409,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       confirmPlan: () => {
         const state = get();
         if (state.planStatus !== "draft") {
-          set({ notice: "이미 확정한 계획이에요. 이후 변경은 비교 내역에 남아요." });
+          set({ notice: state.planStatus === "closed" ? "오늘 일과를 이미 완료했어요." : "이미 확정한 계획이에요." });
           return;
         }
         if (!state.blocks.length) {
@@ -436,9 +421,39 @@ export function createPlannerStore(seed: PlannerSeed) {
           baselineStart: block.start,
           baselineDuration: block.duration,
         }));
-        set({ blocks, planStatus: "committed", notice: "오늘 계획을 확정했어요. 이후 변경은 자동으로 비교돼요." });
+        set({ blocks, planStatus: "committed", notice: "오늘 계획을 확정했어요. 완료 전까지 자유롭게 조정할 수 있어요." });
         const ctx = context();
         if (ctx) save(persistPlanCommit(ctx, blocks));
+      },
+      closePlan: () => {
+        const state = get();
+        if (state.planStatus === "draft") {
+          set({ notice: "먼저 오늘 계획을 확정해 주세요." });
+          return;
+        }
+        if (state.planStatus === "closed") {
+          set({ notice: "오늘 일과를 이미 완료했어요." });
+          return;
+        }
+
+        const ctx = context();
+        set({ planStatus: "closed", notice: "최종 일정과 확정 계획을 비교하고 있어요." });
+        if (!ctx) {
+          set({ notice: "오늘 일과를 완료했어요. 최종 상태로 잠갔어요." });
+          return;
+        }
+
+        void Promise.all([...pendingWrites])
+          .then(() => persistPlanClose(ctx, state.blocks))
+          .then((changeCount) => set({
+            notice: changeCount > 0
+              ? `오늘 일과를 완료했어요. 최종 차이 ${changeCount}개를 기록했어요.`
+              : "오늘 일과를 완료했어요. 확정 계획과 최종 일정이 같아요.",
+          }))
+          .catch(() => set({
+            planStatus: "committed",
+            notice: "오늘 일과를 완료하지 못했어요. 연결을 확인하고 다시 시도해 주세요.",
+          }));
       },
       setNotice: (notice) => set({ notice }),
     };

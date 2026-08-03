@@ -98,6 +98,7 @@ function Logo() {
 
 function CompactTask({ task, priority = false }: { task: Task; priority?: boolean }) {
   const blocks = usePlannerStore((state) => state.blocks);
+  const planStatus = usePlannerStore((state) => state.planStatus);
   const toggleMit = usePlannerStore((state) => state.toggleMit);
   const scheduleTask = usePlannerStore((state) => state.scheduleTask);
   const updateTask = usePlannerStore((state) => state.updateTask);
@@ -116,7 +117,7 @@ function CompactTask({ task, priority = false }: { task: Task; priority?: boolea
   const { ref, handleRef, isDragging } = useDraggable({
     id: `${priority ? "priority" : "task"}:${task.id}`,
     data: { kind: "task", taskId: task.id, title: task.title },
-    disabled: scheduled,
+    disabled: scheduled || planStatus === "closed",
   });
 
   const save = () => {
@@ -148,7 +149,7 @@ function CompactTask({ task, priority = false }: { task: Task; priority?: boolea
       <button className="note-star" data-active={task.isMit} onClick={() => toggleMit(task.id)} aria-label="오늘의 우선순위 전환">
         <Star size={15} fill={task.isMit ? "currentColor" : "none"} />
       </button>
-      <button className="note-task-copy" onClick={() => scheduleTask(task.id)} title={scheduled ? "이미 시간표에 배치됨" : "빈 시간에 배치"} disabled={scheduled}>
+      <button className="note-task-copy" onClick={() => scheduleTask(task.id)} title={scheduled ? "이미 시간표에 배치됨" : planStatus === "closed" ? "오늘 기록을 완료한 일정입니다" : "빈 시간에 배치"} disabled={scheduled || planStatus === "closed"}>
         <strong>{task.title}</strong>
         <span><Tag size={11} /> {task.tag} · {task.estimate}분{scheduled && <em>시간표에 배치됨</em>}</span>
       </button>
@@ -218,12 +219,14 @@ function BrainDumpSection() {
 }
 
 function TimeSlot({ minutes, visible }: { minutes: number; visible: boolean }) {
-  const { ref, isDropTarget } = useDroppable({ id: `slot:${minutes}`, disabled: !visible });
+  const planStatus = usePlannerStore((state) => state.planStatus);
+  const { ref, isDropTarget } = useDroppable({ id: `slot:${minutes}`, disabled: !visible || planStatus === "closed" });
   return <div ref={ref} className="quarter-slot" data-hidden={!visible} data-target={isDropTarget} aria-hidden={!visible} />;
 }
 
 function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number; isLast: boolean }) {
   const tasks = usePlannerStore((state) => state.tasks);
+  const planStatus = usePlannerStore((state) => state.planStatus);
   const selectBlock = usePlannerStore((state) => state.selectBlock);
   const toggleBlockComplete = usePlannerStore((state) => state.toggleBlockComplete);
   const selectedBlockId = usePlannerStore((state) => state.selectedBlockId);
@@ -239,6 +242,7 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
   const { ref, handleRef, isDragging } = useDraggable({
     id: `block:${block.id}:${hour}`,
     data: { kind: "block", blockId: block.id, title: block.title, segmentOffset: start - block.start },
+    disabled: planStatus === "closed",
   });
 
   const beginResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -280,10 +284,10 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
       style={{ gridColumn: `${startQuarter + 1} / span ${span}` }}
       onClick={() => selectBlock(block.id)}
     >
-      <button ref={handleRef} className="paper-block-drag" aria-label={`${block.title} 이동`} title="블록 몸통을 끌어서 이동"><GripVertical size={12} /></button>
+      {planStatus !== "closed" && <button ref={handleRef} className="paper-block-drag" aria-label={`${block.title} 이동`} title="블록 몸통을 끌어서 이동"><GripVertical size={12} /></button>}
       <span className="paper-block-title">{first && isMit && <Star className="paper-block-mit" size={11} fill="currentColor" />}{first ? block.title : "↳ 계속"}</span>
       {first && <small>{formatTime(block.start)} · {formatDuration(block.duration)}</small>}
-      {isLast && (
+      {isLast && planStatus !== "closed" && (
         <>
           <button className="paper-block-check" data-checked={block.status === "completed"} onClick={(event) => { event.stopPropagation(); toggleBlockComplete(block.id); }} aria-label="완료 전환">
             {block.status === "completed" && <Check size={11} />}
@@ -297,6 +301,7 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
 
 function SelectedBlockBar() {
   const blocks = usePlannerStore((state) => state.blocks);
+  const planStatus = usePlannerStore((state) => state.planStatus);
   const selectedBlockId = usePlannerStore((state) => state.selectedBlockId);
   const resizeBlock = usePlannerStore((state) => state.resizeBlock);
   const updateActualMinutes = usePlannerStore((state) => state.updateActualMinutes);
@@ -311,15 +316,21 @@ function SelectedBlockBar() {
     <div className="selected-block-bar">
       <div><strong>{selected.title}</strong><span>{formatTime(selected.start)}–{formatTime(selected.start + selected.duration)}</span></div>
       {changed && <span className="change-pill">확정 후 변경됨</span>}
-      <div className="resize-actions" aria-label="블록 크기 조정">
-        <button onClick={() => resizeBlock(selected.id, selected.duration - 15)} aria-label="15분 줄이기"><Minus size={14} /></button>
-        <b>{formatDuration(selected.duration)}</b>
-        <button onClick={() => resizeBlock(selected.id, selected.duration + 15)} aria-label="15분 늘리기"><Plus size={14} /></button>
-      </div>
-      <label className="actual-time">실제 <input type="number" min="5" step="5" value={selected.actualMinutes ?? selected.duration} onChange={(event) => updateActualMinutes(selected.id, Number(event.target.value))} />분</label>
-      <button className="quiet-action" onClick={() => addBufferAfter(selected.id)}>+ 15분 여유</button>
-      <button className="remove-block-action" onClick={() => removeBlock(selected.id)}><Trash2 size={14} /> 일정에서 빼기</button>
-      <button className="complete-action" data-completed={selected.status === "completed"} onClick={() => toggleBlockComplete(selected.id)}><Check size={15} /> {selected.status === "completed" ? "완료됨" : "완료"}</button>
+      {planStatus === "closed" ? (
+        <span className="closed-pill"><CheckCircle2 size={13} /> 오늘 기록 완료</span>
+      ) : (
+        <>
+          <div className="resize-actions" aria-label="블록 크기 조정">
+            <button onClick={() => resizeBlock(selected.id, selected.duration - 15)} aria-label="15분 줄이기"><Minus size={14} /></button>
+            <b>{formatDuration(selected.duration)}</b>
+            <button onClick={() => resizeBlock(selected.id, selected.duration + 15)} aria-label="15분 늘리기"><Plus size={14} /></button>
+          </div>
+          <label className="actual-time">실제 <input type="number" min="5" step="5" value={selected.actualMinutes ?? selected.duration} onChange={(event) => updateActualMinutes(selected.id, Number(event.target.value))} />분</label>
+          <button className="quiet-action" onClick={() => addBufferAfter(selected.id)}>+ 15분 여유</button>
+          <button className="remove-block-action" onClick={() => removeBlock(selected.id)}><Trash2 size={14} /> 일정에서 빼기</button>
+          <button className="complete-action" data-completed={selected.status === "completed"} onClick={() => toggleBlockComplete(selected.id)}><Check size={15} /> {selected.status === "completed" ? "완료됨" : "완료"}</button>
+        </>
+      )}
     </div>
   );
 }
@@ -360,6 +371,7 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
   const planStatus = usePlannerStore((state) => state.planStatus);
   const blocks = usePlannerStore((state) => state.blocks);
   const confirmPlan = usePlannerStore((state) => state.confirmPlan);
+  const closePlan = usePlannerStore((state) => state.closePlan);
   const [resolution, setResolution] = useState<15 | 30>(30);
   const [notesOpen, setNotesOpen] = useState(true);
   const planned = blocks.reduce((sum, block) => sum + block.duration, 0);
@@ -386,7 +398,16 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
         <div className="planner-heading-actions">
           <button className="notes-toggle" onClick={() => setNotesOpen((open) => !open)}>{notesOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}{notesOpen ? "메모 닫기" : "메모 열기"}</button>
           <div className="resolution-switch"><span>눈금</span><button data-active={resolution === 30} onClick={() => setResolution(30)}>30분</button><button data-active={resolution === 15} onClick={() => setResolution(15)}>15분</button></div>
-          <button className="confirm-plan" data-committed={planStatus !== "draft"} onClick={confirmPlan}>{planStatus === "draft" ? "계획 확정하기" : <><Check size={15} /> 계획 확정됨</>}</button>
+          {planStatus === "draft" ? (
+            <button className="confirm-plan" onClick={confirmPlan}>계획 확정하기</button>
+          ) : (
+            <>
+              <button className="confirm-plan" data-committed="true" onClick={confirmPlan}><Check size={15} /> 계획 확정됨</button>
+              <button className="close-day" data-closed={planStatus === "closed"} onClick={closePlan} disabled={planStatus === "closed"}>
+                <CheckCircle2 size={15} /> {planStatus === "closed" ? "오늘 기록 완료" : "오늘 일과 완료"}
+              </button>
+            </>
+          )}
         </div>
       </div>
       <SelectedBlockBar />
@@ -394,7 +415,7 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
         {notesOpen && <aside className="paper-notes"><PrioritySection /><BrainDumpSection /></aside>}
         <Timetable resolution={resolution} />
       </div>
-      <p className="planner-help">할 일을 시간표 칸으로 끌어 놓으세요. 확정 후 옮기거나 크기를 바꾸면 기록에 자동으로 남습니다.</p>
+      <p className="planner-help">확정 후에도 자유롭게 조정하세요. ‘오늘 일과 완료’를 누르면 확정 계획과 최종 일정의 차이만 기록됩니다.</p>
     </main>
   );
 }

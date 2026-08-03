@@ -10,13 +10,6 @@ type PersistenceContext = {
   timezone: string;
 };
 
-type ScheduleChange = {
-  blockId: string;
-  type: "created" | "moved" | "resized" | "completed" | "reopened" | "cancelled";
-  before?: Record<string, unknown>;
-  after?: Record<string, unknown>;
-};
-
 function toIso(planDate: string, minutes: number) {
   const hours = Math.floor(minutes / 60).toString().padStart(2, "0");
   const mins = (minutes % 60).toString().padStart(2, "0");
@@ -88,7 +81,11 @@ export async function persistTaskCreate(context: PersistenceContext, task: Task)
   await replaceTaskTag(context, task);
 }
 
-export async function persistTaskUpdate(context: PersistenceContext, task: Task) {
+export async function persistTaskUpdate(
+  context: PersistenceContext,
+  task: Task,
+  syncCurrentPlan = true,
+) {
   const supabase = createClient();
   const { error } = await supabase
     .from("tasks")
@@ -97,13 +94,16 @@ export async function persistTaskUpdate(context: PersistenceContext, task: Task)
     .eq("user_id", context.userId);
   assertSuccess(error);
 
-  const { error: blockError } = await supabase
-    .from("time_blocks")
-    .update({ title: task.title })
-    .eq("task_id", task.id)
-    .eq("user_id", context.userId)
-    .neq("status", "cancelled");
-  assertSuccess(blockError);
+  if (syncCurrentPlan) {
+    const { error: blockError } = await supabase
+      .from("time_blocks")
+      .update({ title: task.title })
+      .eq("task_id", task.id)
+      .eq("daily_plan_id", context.dailyPlanId)
+      .eq("user_id", context.userId)
+      .neq("status", "cancelled");
+    assertSuccess(blockError);
+  }
   await replaceTaskTag(context, task);
 }
 
@@ -304,22 +304,44 @@ export async function persistPlanCommit(
   }));
 }
 
-export async function persistScheduleChange(
+export async function persistPlanClose(
   context: PersistenceContext,
-  change: ScheduleChange,
+  blocks: TimeBlock[],
 ) {
   const supabase = createClient();
-  const { error } = await supabase.from("schedule_change_events").insert({
-    user_id: context.userId,
-    daily_plan_id: context.dailyPlanId,
-    time_block_id: change.blockId,
-    change_type: change.type,
-    before_state: change.before ?? null,
-    after_state: change.after ?? null,
-  });
-
-  // 배포 전에 마이그레이션이 아직 적용되지 않은 짧은 구간에는 핵심 저장을 막지 않는다.
-  if (error && error.code !== "42P01" && error.code !== "PGRST205") {
-    throw new Error(error.message);
+  if (blocks.length) {
+    const { error: upsertError } = await supabase.from("time_blocks").upsert(
+      blocks.map((block) => ({
+        id: block.id,
+        user_id: context.userId,
+        daily_plan_id: context.dailyPlanId,
+        task_id: block.taskId ?? null,
+        kind: block.type,
+        title: block.title,
+        planned_start: toIso(context.planDate, block.start),
+        planned_end: toIso(context.planDate, block.start + block.duration),
+        status: dbStatus(block.status),
+      })),
+      { onConflict: "id" },
+    );
+    assertSuccess(upsertError);
   }
+
+  let cancelQuery = supabase
+    .from("time_blocks")
+    .update({ status: "cancelled" })
+    .eq("daily_plan_id", context.dailyPlanId)
+    .eq("user_id", context.userId)
+    .neq("status", "cancelled");
+  if (blocks.length) {
+    cancelQuery = cancelQuery.not("id", "in", `(${blocks.map((block) => block.id).join(",")})`);
+  }
+  const { error: cancelError } = await cancelQuery;
+  assertSuccess(cancelError);
+
+  const { data, error } = await supabase.rpc("close_daily_plan", {
+    p_daily_plan_id: context.dailyPlanId,
+  });
+  assertSuccess(error);
+  return Number(data ?? 0);
 }

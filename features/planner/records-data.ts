@@ -42,13 +42,8 @@ function localDate(iso: string) {
   return dateInTimeZone("Asia/Seoul", new Date(iso));
 }
 
-function timeLabel(iso: string) {
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(iso));
+function minuteOfDayLabel(minutes: number) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
 export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
@@ -63,6 +58,7 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
   if (!plans?.length) return EMPTY_BUNDLE;
 
   const planIds = plans.map((plan) => plan.id);
+  const closedPlanIds = plans.filter((plan) => plan.status === "closed").map((plan) => plan.id);
   const [blocksResult, reflectionsResult, tasksResult, changesResult] = await Promise.all([
     supabase
       .from("time_blocks")
@@ -83,13 +79,15 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(2000),
-    supabase
-      .from("schedule_change_events")
-      .select("id,daily_plan_id,time_block_id,change_type,before_state,after_state,created_at")
-      .eq("user_id", userId)
-      .in("daily_plan_id", planIds)
-      .order("created_at", { ascending: false })
-      .limit(2000),
+    closedPlanIds.length
+      ? supabase
+          .from("schedule_change_events")
+          .select("id,daily_plan_id,time_block_id,change_type,before_state,after_state,created_at")
+          .eq("user_id", userId)
+          .in("daily_plan_id", closedPlanIds)
+          .order("created_at", { ascending: false })
+          .limit(2000)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   if (blocksResult.error) throw new Error(blocksResult.error.message);
@@ -187,16 +185,6 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
     if (day) day.changeCount += 1;
   }
 
-  if (!changes.length) {
-    for (const block of blocks) {
-      if (!block.baseline_start || !block.baseline_end) continue;
-      if (block.baseline_start === block.planned_start && block.baseline_end === block.planned_end) continue;
-      const date = planDateById.get(block.daily_plan_id);
-      const day = date ? dayMap.get(date) : undefined;
-      if (day) day.changeCount += 1;
-    }
-  }
-
   const activities: ActivityRecord[] = [];
   for (const plan of plans) {
     if (!plan.committed_at) continue;
@@ -255,34 +243,20 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
     const block = change.time_block_id ? blockById.get(change.time_block_id) : undefined;
     const date = planDateById.get(change.daily_plan_id) ?? localDate(change.created_at);
     const before = change.before_state as { title?: string; start?: number; duration?: number } | null;
-    const after = change.after_state as { start?: number; duration?: number } | null;
+    const after = change.after_state as { title?: string; start?: number; duration?: number } | null;
     const details: string[] = [];
-    if (before?.start !== undefined && after?.start !== undefined) details.push(`${Math.floor(before.start / 60)}:${String(before.start % 60).padStart(2, "0")} → ${Math.floor(after.start / 60)}:${String(after.start % 60).padStart(2, "0")}`);
+    if (before?.start !== undefined && after?.start !== undefined) details.push(`${minuteOfDayLabel(before.start)} → ${minuteOfDayLabel(after.start)}`);
     if (before?.duration !== undefined && after?.duration !== undefined && before.duration !== after.duration) details.push(`${before.duration}분 → ${after.duration}분`);
+    if (change.change_type === "created" && after?.start !== undefined) details.push(`${minuteOfDayLabel(after.start)} · ${after.duration ?? 0}분`);
+    if (change.change_type === "cancelled" && before?.start !== undefined) details.push(`${minuteOfDayLabel(before.start)} · ${before.duration ?? 0}분`);
     activities.push({
       id: `change-${change.id}`,
       occurredAt: change.created_at,
       date,
       kind: "schedule",
-      title: block?.title ?? before?.title ?? "타임블록",
+      title: block?.title ?? before?.title ?? after?.title ?? "타임블록",
       detail: `${changeLabels[change.change_type] ?? "일정 변경"}${details.length ? ` · ${details.join(" · ")}` : ""}`,
     });
-  }
-
-  if (!changes.length) {
-    for (const block of blocks) {
-      if (!block.baseline_start || !block.baseline_end) continue;
-      if (block.baseline_start === block.planned_start && block.baseline_end === block.planned_end) continue;
-      const date = planDateById.get(block.daily_plan_id) ?? localDate(block.updated_at);
-      activities.push({
-        id: `baseline-${block.id}`,
-        occurredAt: block.updated_at,
-        date,
-        kind: "schedule",
-        title: block.title,
-        detail: `일정 변경 · ${timeLabel(block.baseline_start)} → ${timeLabel(block.planned_start)}`,
-      });
-    }
   }
 
   activities.sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());

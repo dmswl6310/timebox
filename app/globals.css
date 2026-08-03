@@ -2947,7 +2947,8 @@ textarea:focus-visible {
 }
 
 .notes-toggle,
-.confirm-plan {
+.confirm-plan,
+.close-day {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2958,6 +2959,7 @@ textarea:focus-visible {
   background: #fff;
   font-size: 11px;
   font-weight: 850;
+  white-space: nowrap;
 }
 
 .confirm-plan {
@@ -2970,6 +2972,19 @@ textarea:focus-visible {
   border-color: #cfd4cd;
   background: #edf0eb;
   color: #526057;
+}
+
+.close-day {
+  border-color: #b86b42;
+  background: #fff7f0;
+  color: #8e4e2d;
+}
+
+.close-day[data-closed="true"] {
+  border-color: #cfd4cd;
+  background: #edf0eb;
+  color: #526057;
+  cursor: default;
 }
 
 .resolution-switch {
@@ -3282,6 +3297,7 @@ textarea:focus-visible {
 .selected-block-bar > div:first-child strong { display: block; max-width: 270px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .selected-block-bar > div:first-child span { display: block; margin-top: 2px; color: #7d817c; font-size: 9px; }
 .change-pill { padding: 5px 7px; border-radius: 20px; background: #fff0d7; color: #946113; font-size: 8px; font-weight: 850; }
+.closed-pill { display: inline-flex; align-items: center; gap: 4px; padding: 6px 9px; border-radius: 20px; background: #e4eee7; color: #315440; font-size: 9px; font-weight: 850; }
 .resize-actions { display: flex; align-items: center; height: 31px; border: 1px solid #d9dbd5; border-radius: 7px; background: #fff; }
 .resize-actions button { display: grid; place-items: center; width: 29px; height: 29px; background: transparent; }
 .resize-actions b { min-width: 52px; font-size: 9px; text-align: center; }

@@ -77,7 +77,7 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
       .limit(2000),
     supabase
       .from("daily_reflections")
-      .select("id,daily_plan_id,content,mood,created_at,updated_at")
+      .select("daily_plan_id,content,mood,created_at,updated_at")
       .eq("user_id", userId)
       .in("daily_plan_id", planIds)
       .limit(500),
@@ -238,7 +238,7 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
   for (const reflection of reflections) {
     const date = planDateById.get(reflection.daily_plan_id) ?? localDate(reflection.updated_at);
     activities.push({
-      id: `journal-${reflection.id}`,
+      id: `journal-${reflection.daily_plan_id}`,
       occurredAt: reflection.updated_at,
       date,
       kind: "journal",

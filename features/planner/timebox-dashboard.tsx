@@ -47,7 +47,7 @@ const MOODS = ["매우 힘듦", "힘듦", "보통", "좋음", "아주 좋음"];
 type Page = "today" | "journal" | "records";
 type ServiceMode = "professional" | "paper";
 type RecordTab = "summary" | "activity";
-type Period = "week" | "month" | "quarter" | "year" | "all";
+type Period = "day" | "week" | "month" | "quarter" | "year" | "all";
 
 const MODE_STORAGE_KEY = "timebox-service-mode";
 const MODE_CHANGE_EVENT = "timebox-service-mode-change";
@@ -416,6 +416,14 @@ function JournalView({ onOpenRecords }: { onOpenRecords: () => void }) {
 
 function cutoffFor(period: Period) {
   if (period === "all") return "0000-01-01";
+  if (period === "day") {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Seoul",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  }
   const date = new Date();
   const days = period === "week" ? 7 : period === "month" ? 30 : period === "quarter" ? 90 : 365;
   date.setDate(date.getDate() - days + 1);
@@ -511,7 +519,7 @@ function RecordsView({ initialJournalSearch = false }: { initialJournalSearch?: 
       <div className="records-heading"><div><p>ARCHIVE</p><h1>나의 기록</h1><span>일정, 일기, 변경 내역을 한곳에서 찾아보세요.</span></div></div>
       <div className="records-tools">
         <div className="record-tabs"><button data-active={tab === "summary"} onClick={() => setTab("summary")}><BarChart3 size={15} /> 요약 통계</button><button data-active={tab === "activity"} onClick={() => setTab("activity")}><History size={15} /> 활동 기록</button></div>
-        <div className="period-tabs">{(["week", "month", "quarter", "year", "all"] as Period[]).map((item) => <button key={item} data-active={period === item} onClick={() => setPeriod(item)}>{item === "week" ? "1주" : item === "month" ? "1개월" : item === "quarter" ? "3개월" : item === "year" ? "1년" : "전체"}</button>)}</div>
+        <div className="period-tabs">{(["day", "week", "month", "quarter", "year", "all"] as Period[]).map((item) => <button key={item} data-active={period === item} onClick={() => setPeriod(item)}>{item === "day" ? "하루" : item === "week" ? "1주" : item === "month" ? "1개월" : item === "quarter" ? "3개월" : item === "year" ? "1년" : "전체"}</button>)}</div>
         <label className="records-search"><Search size={16} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="할 일, 태그, 일기, 날짜 검색" /><kbd>⌘ K</kbd></label>
       </div>
 

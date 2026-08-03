@@ -49,6 +49,16 @@ Supabase SQL Editor 또는 CLI에서 `supabase/migrations`의 `001`부터 최신
 
 Supabase Auth의 Redirect URLs에는 로컬 주소와 배포 주소의 `/auth/callback`을 등록해야 합니다.
 
+## 테스트 데이터 초기화
+
+로그인 계정과 DB 구조는 유지하고 Timebox 앱 데이터만 전부 비우려면 Supabase SQL Editor에서 다음 파일을 수동 실행합니다.
+
+```text
+supabase/scripts/reset_app_data.sql
+```
+
+이 파일은 복구할 수 없는 `truncate` 작업을 수행하므로 자동 마이그레이션에 포함하지 않습니다. 실행 후 파일 하단의 확인 쿼리가 모든 앱 테이블을 `0건`으로 표시하는지 확인합니다.
+
 ## 주요 경로
 
 ```text
@@ -64,6 +74,8 @@ features/planner/
   store.tsx                   Zustand 도메인 상태와 명령
   timebox-dashboard.tsx       클라이언트 UI와 상호작용
 supabase/migrations/          스키마, RLS, 지표, 공유, 변경 이력
+supabase/scripts/             필요할 때만 실행하는 운영·초기화 SQL
+.github/workflows/ci.yml      Push·PR 자동 타입·린트·빌드 검사
 ```
 
 날짜별 플래너는 `/?date=YYYY-MM-DD`로 열립니다. 날짜 파라미터가 없으면 서울 기준 오늘 계획을 엽니다.

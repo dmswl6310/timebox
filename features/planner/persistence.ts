@@ -123,6 +123,19 @@ export async function persistTagCreate(
   assertSuccess(error);
 }
 
+export async function persistDayStartHour(
+  context: PersistenceContext,
+  hour: number,
+) {
+  const supabase = createClient();
+  const dayStart = `${String(hour).padStart(2, "0")}:00:00`;
+  const { error } = await supabase.from("profiles").upsert(
+    { id: context.userId, day_start: dayStart },
+    { onConflict: "id" },
+  );
+  assertSuccess(error);
+}
+
 export async function persistTaskUpdate(
   context: PersistenceContext,
   task: Task,

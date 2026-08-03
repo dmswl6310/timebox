@@ -3490,6 +3490,10 @@ button.month-day:hover { border-color: #aebcaf; background: #f1f5ef; }
 .profile-mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 13px; }
 .profile-mode-switch button { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 38px; border: 1px solid #d8ddd7; border-radius: 8px; color: #68716a; font-size: 9px; font-weight: 850; }
 .profile-mode-switch button[data-active="true"] { border-color: #66816e; background: #e8f0e5; color: #294a38; }
+.profile-day-start { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 13px; }
+.profile-day-start > span { color: #68716a; font-size: 9px; font-weight: 800; }
+.profile-day-start select { min-width: 130px; height: 38px; padding: 0 10px; border: 1px solid #cfd7d1; border-radius: 8px; background: #fff; color: #294438; font-size: 10px; font-weight: 850; }
+.profile-day-start select:focus { border-color: #648875; outline: 0; box-shadow: 0 0 0 3px rgba(79, 122, 98, .1); }
 .profile-panel > footer { display: flex; justify-content: flex-end; padding: 14px 20px 18px; border-top: 1px solid #e2e6e1; }
 .profile-signout { display: flex; align-items: center; gap: 5px; min-height: 37px; padding: 0 12px; border: 1px solid #ebcec9; border-radius: 8px; color: #a05047; font-size: 9px; font-weight: 850; }
 .profile-signout:hover { background: #fff1ef; }

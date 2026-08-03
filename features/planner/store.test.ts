@@ -44,6 +44,7 @@ function seed({
     dailyPlanId: null,
     planDate: "2026-08-04",
     timezone: "Asia/Seoul",
+    dayStartHour: 7,
     tasks,
     availableTags: ["미분류", "업무"],
     blocks,
@@ -55,6 +56,23 @@ function seed({
 }
 
 describe("일정 배치", () => {
+  it("빈 시간표에는 설정한 기상 시간부터 작업을 자동 배치한다", () => {
+    const store = createPlannerStore(seed());
+
+    store.getState().scheduleTask("task-1");
+
+    expect(store.getState().blocks[0]?.start).toBe(7 * 60);
+  });
+
+  it("기상 시간보다 이른 위치로 옮기면 하루 시작 시간에 맞춘다", () => {
+    const initialBlock = block("block-1", "task-1", 9 * 60);
+    const store = createPlannerStore(seed({ blocks: [initialBlock] }));
+
+    store.getState().moveBlock(initialBlock.id, 6 * 60);
+
+    expect(store.getState().blocks[0]?.start).toBe(7 * 60);
+  });
+
   it("정각에서 15분 위치로 작업을 옮길 수 있다", () => {
     const initialBlock = block("block-1", "task-1", 9 * 60);
     const store = createPlannerStore(seed({ blocks: [initialBlock] }));
@@ -177,6 +195,25 @@ describe("사용자 태그", () => {
     expect(store.getState().tasks[0]?.tag).toBe("운동");
     expect(store.getState().availableTags).toContain("운동");
     expect(store.getState().blocks[0]?.color).toBe(store.getState().tasks[0]?.color);
+  });
+});
+
+describe("하루 시작 시간", () => {
+  it("마이페이지에서 선택한 기상 시간을 상태에 저장한다", () => {
+    const store = createPlannerStore(seed());
+
+    store.getState().setDayStartHour(8);
+
+    expect(store.getState().dayStartHour).toBe(8);
+    expect(store.getState().notice).toContain("오전 8시");
+  });
+
+  it("지원 범위를 벗어난 값은 안전한 범위로 제한한다", () => {
+    const store = createPlannerStore(seed());
+
+    store.getState().setDayStartHour(2);
+
+    expect(store.getState().dayStartHour).toBe(5);
   });
 });
 

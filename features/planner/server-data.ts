@@ -63,6 +63,11 @@ function blockColor(kind: TimeBlock["type"], task?: Task) {
   return "slate" as const;
 }
 
+function profileDayStartHour(value: string | null | undefined) {
+  const hour = Number(value?.slice(0, 2));
+  return Number.isInteger(hour) ? Math.max(5, Math.min(12, hour)) : 6;
+}
+
 export async function getPlannerSeed(requestedPlanDate?: string): Promise<PlannerSeed | null> {
   const supabase = await createClient();
   const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
@@ -96,7 +101,7 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
     plan = result.data;
   }
 
-  const [prioritiesResult, blocksResult, reflectionResult, blockReasonsResult, allTagsResult] =
+  const [prioritiesResult, blocksResult, reflectionResult, blockReasonsResult, allTagsResult, profileResult] =
     await Promise.all([
       supabase
         .from("daily_priorities")
@@ -127,9 +132,14 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
         .select("name")
         .eq("user_id", userId)
         .order("name"),
+      supabase
+        .from("profiles")
+        .select("day_start")
+        .eq("id", userId)
+        .maybeSingle(),
     ]);
 
-  for (const result of [prioritiesResult, blocksResult, reflectionResult, blockReasonsResult, allTagsResult]) {
+  for (const result of [prioritiesResult, blocksResult, reflectionResult, blockReasonsResult, allTagsResult, profileResult]) {
     if (result.error) throw new Error(result.error.message);
   }
 
@@ -246,6 +256,7 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
     dailyPlanId: plan.id,
     planDate,
     timezone: plan.timezone,
+    dayStartHour: profileDayStartHour(profileResult.data?.day_start),
     tasks,
     availableTags: tagSuggestions([
       ...(allTagsResult.data ?? []).map((tag) => tag.name),

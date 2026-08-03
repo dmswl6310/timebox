@@ -10,6 +10,7 @@ import {
   persistBlockCompletion,
   persistBlockCreate,
   persistBlockMove,
+  persistDayStartHour,
   persistPlanClose,
   persistPlanCommit,
   persistPriorities,
@@ -29,6 +30,7 @@ export type PlannerSeed = {
   dailyPlanId: string | null;
   planDate: string;
   timezone: string;
+  dayStartHour: number;
   tasks: Task[];
   availableTags: string[];
   blocks: TimeBlock[];
@@ -63,6 +65,7 @@ export const demoSeed: PlannerSeed = {
   dailyPlanId: null,
   planDate: dateInTimeZone(),
   timezone: "Asia/Seoul",
+  dayStartHour: 7,
   tasks: demoTasks,
   availableTags: tagSuggestions(demoTasks.map((task) => task.tag)),
   blocks: demoBlocks,
@@ -76,6 +79,7 @@ export type PlannerState = PlannerSeed & {
   mobileView: MobileView;
   notice: string | null;
   addTag: (name: string) => void;
+  setDayStartHour: (hour: number) => void;
   addTask: (title: string, tag: TagName, estimate: number) => void;
   updateTask: (taskId: string, patch: Pick<Task, "title" | "tag" | "estimate">) => void;
   toggleMit: (taskId: string) => void;
@@ -102,13 +106,18 @@ function overlaps(blocks: TimeBlock[], start: number, duration: number, ignoredB
   return blocks.some((block) => block.id !== ignoredBlockId && start < block.start + block.duration && start + duration > block.start);
 }
 
-function nextAvailableStart(blocks: TimeBlock[], duration: number) {
-  let cursor = 5 * 60;
+function validDayStartHour(hour: number) {
+  return Math.max(5, Math.min(12, Math.round(hour)));
+}
+
+function nextAvailableStart(blocks: TimeBlock[], duration: number, dayStartHour: number) {
+  const dayStart = validDayStartHour(dayStartHour) * 60;
+  let cursor = dayStart;
   while (cursor + duration <= 24 * 60) {
     if (!overlaps(blocks, cursor, duration)) return cursor;
     cursor += 15;
   }
-  return Math.max(5 * 60, 24 * 60 - duration);
+  return Math.max(dayStart, 24 * 60 - duration);
 }
 
 function cloneSeed(seed: PlannerSeed): PlannerSeed {
@@ -162,6 +171,13 @@ export function createPlannerStore(seed: PlannerSeed) {
         });
         const ctx = context();
         if (ctx) save(() => persistTagCreate(ctx, cleanTag, colorForTag(cleanTag)));
+      },
+
+      setDayStartHour: (hour) => {
+        const dayStartHour = validDayStartHour(hour);
+        set({ dayStartHour, notice: `시간표 시작을 오전 ${dayStartHour}시로 바꿨어요.` });
+        const ctx = context();
+        if (ctx) save(() => persistDayStartHour(ctx, dayStartHour));
       },
 
       addTask: (title, tag, estimate) => {
@@ -244,14 +260,14 @@ export function createPlannerStore(seed: PlannerSeed) {
           return;
         }
         const duration = task.estimate;
-        const desiredStart = requestedStart ?? nextAvailableStart(state.blocks, duration);
+        const desiredStart = requestedStart ?? nextAvailableStart(state.blocks, duration, state.dayStartHour);
         if (requestedStart !== undefined && overlaps(state.blocks, desiredStart, duration)) {
           set({ notice: "이미 다른 일정이 있는 시간이에요. 빈 칸에 배치해 주세요." });
           return;
         }
         const block: TimeBlock = {
           id: crypto.randomUUID(), taskId: task.id, title: task.title,
-          start: Math.max(5 * 60, Math.min(desiredStart, 24 * 60 - duration)),
+          start: Math.max(state.dayStartHour * 60, Math.min(desiredStart, 24 * 60 - duration)),
           duration, type: "task", color: task.color, status: "scheduled",
           changeReasons: state.planStatus === "committed" ? { created: reason?.trim() } : undefined,
         };
@@ -274,7 +290,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
-        const safeStart = Math.max(5 * 60, Math.min(start, 24 * 60 - block.duration));
+        const safeStart = Math.max(state.dayStartHour * 60, Math.min(start, 24 * 60 - block.duration));
         if (overlaps(state.blocks, safeStart, block.duration, blockId)) {
           set({ notice: "다른 일정과 겹칠 수 없어요. 빈 시간으로 옮겨 주세요." });
           return;

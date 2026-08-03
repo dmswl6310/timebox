@@ -48,9 +48,9 @@ import { PlannerStoreProvider, usePlannerStore, type PlannerSeed } from "./store
 import { tagSuggestions } from "./tag-utils";
 import type { TagName, Task, TimeBlock } from "./types";
 
-const DAY_START_HOUR = 5;
 const DAY_END_HOUR = 24;
 const ESTIMATE_OPTIONS = [15, 30, 45, 60, 90, 120, 180] as const;
+const DAY_START_OPTIONS = [5, 6, 7, 8, 9, 10, 11, 12] as const;
 const MOODS = ["매우 힘듦", "힘듦", "보통", "좋음", "아주 좋음"];
 
 type Page = "today" | "journal" | "records";
@@ -470,7 +470,10 @@ function SelectedBlockBar() {
 
 function Timetable({ resolution }: { resolution: 15 | 30 }) {
   const blocks = usePlannerStore((state) => state.blocks);
-  const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, index) => DAY_START_HOUR + index);
+  const dayStartHour = usePlannerStore((state) => state.dayStartHour);
+  const earliestBlockHour = blocks.length ? Math.floor(Math.min(...blocks.map((block) => block.start)) / 60) : dayStartHour;
+  const visibleStartHour = Math.min(dayStartHour, earliestBlockHour);
+  const hours = Array.from({ length: DAY_END_HOUR - visibleStartHour }, (_, index) => visibleStartHour + index);
   return (
     <section className="paper-section timetable-section">
       <div className="time-head">
@@ -736,9 +739,11 @@ function ProfilePanel({
   demo,
   tags,
   mode,
+  dayStartHour,
   onClose,
   onAddTag,
   onModeChange,
+  onDayStartHourChange,
   onSignOut,
 }: {
   open: boolean;
@@ -746,9 +751,11 @@ function ProfilePanel({
   demo: boolean;
   tags: string[];
   mode: ServiceMode;
+  dayStartHour: number;
   onClose: () => void;
   onAddTag: (name: string) => void;
   onModeChange: (mode: ServiceMode) => void;
+  onDayStartHourChange: (hour: number) => void;
   onSignOut: () => void;
 }) {
   const [tagName, setTagName] = useState("");
@@ -786,6 +793,15 @@ function ProfilePanel({
               <button data-active={mode === "professional"} onClick={() => onModeChange("professional")}><BriefcaseBusiness size={14} />일잘러 모드</button>
               <button data-active={mode === "paper"} onClick={() => onModeChange("paper")}><NotebookPen size={14} />종이 모드</button>
             </div>
+          </section>
+          <section className="profile-section">
+            <div><Clock3 size={15} /><div><strong>기상 시간 · 시간표 시작</strong><small>일정표는 선택한 시간부터 시작하고, 계정에 저장돼요.</small></div></div>
+            <label className="profile-day-start">
+              <span>하루 시작</span>
+              <select value={dayStartHour} onChange={(event) => onDayStartHourChange(Number(event.target.value))} aria-label="기상 시간">
+                {DAY_START_OPTIONS.map((hour) => <option key={hour} value={hour}>오전 {hour}시</option>)}
+              </select>
+            </label>
           </section>
         </div>
         <footer><button className="profile-signout" onClick={onSignOut}><LogOut size={15} />{demo ? "로그인 화면으로" : "로그아웃"}</button></footer>
@@ -1048,6 +1064,8 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   const userEmail = usePlannerStore((state) => state.userEmail);
   const availableTags = usePlannerStore((state) => state.availableTags);
   const addTag = usePlannerStore((state) => state.addTag);
+  const dayStartHour = usePlannerStore((state) => state.dayStartHour);
+  const setDayStartHour = usePlannerStore((state) => state.setDayStartHour);
   const dailyPlanId = usePlannerStore((state) => state.dailyPlanId);
   const planDate = usePlannerStore((state) => state.planDate);
   const planStatus = usePlannerStore((state) => state.planStatus);
@@ -1268,7 +1286,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
         {page === "records" && <RecordsView initialJournalSearch={recordsIntent === "journal"} onOpenRecord={openRecord} />}
         <AppNav page={page} setPage={openPage} />
         <ShareManager open={sharePanelOpen} loading={shareLinksLoading} creating={sharing} revokingId={revokingShareId} now={shareManagerNow} demo={!userId} error={shareError} shares={shareLinks} onClose={() => setSharePanelOpen(false)} onCreate={shareSchedule} onRevoke={revokeShare} />
-        <ProfilePanel open={profilePanelOpen} email={userEmail} demo={!userId} tags={availableTags} mode={serviceMode} onClose={() => setProfilePanelOpen(false)} onAddTag={addTag} onModeChange={changeServiceMode} onSignOut={signOut} />
+        <ProfilePanel open={profilePanelOpen} email={userEmail} demo={!userId} tags={availableTags} mode={serviceMode} dayStartHour={dayStartHour} onClose={() => setProfilePanelOpen(false)} onAddTag={addTag} onModeChange={changeServiceMode} onDayStartHourChange={setDayStartHour} onSignOut={signOut} />
         {reasonPrompt && <ChangeReasonDialog title={reasonPrompt.title} description={reasonPrompt.description} value={reasonText} onChange={setReasonText} onCancel={() => finishReasonPrompt(null)} onSubmit={() => finishReasonPrompt(reasonText)} />}
         {notice && <div className="toast" role="status"><CheckCircle2 size={17} /> {notice}<button onClick={() => setNotice(null)} aria-label="알림 닫기"><X size={15} /></button></div>}
         <DragOverlay className="drag-overlay" dropAnimation={null}>{(source) => <div className="drag-preview"><GripVertical size={15} /><span>{String(source.data.title ?? "타임블록")}</span></div>}</DragOverlay>

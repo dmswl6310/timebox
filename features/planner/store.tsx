@@ -192,17 +192,17 @@ export function createPlannerStore(seed: PlannerSeed) {
       toggleMit: (taskId) => {
         const state = get();
         if (state.planStatus === "closed") {
-          set({ notice: "오늘 일과를 완료한 뒤에는 오늘의 우선순위를 바꿀 수 없어요." });
+          set({ notice: "일과를 완료한 뒤에는 해당 날짜의 우선순위를 바꿀 수 없어요." });
           return;
         }
         const target = state.tasks.find((task) => task.id === taskId);
         if (!target) return;
         if (!target.isMit && state.tasks.filter((task) => task.isMit && !task.completed).length >= 3) {
-          set({ notice: "오늘의 핵심 업무는 최대 3개까지 선택할 수 있어요." });
+          set({ notice: "해당 날짜의 핵심 업무는 최대 3개까지 선택할 수 있어요." });
           return;
         }
         const tasks = state.tasks.map((task) => task.id === taskId ? { ...task, isMit: !task.isMit } : task);
-        set({ tasks, notice: target.isMit ? "핵심 업무에서 뺐어요." : "오늘의 핵심 업무로 정했어요." });
+        set({ tasks, notice: target.isMit ? "핵심 업무에서 뺐어요." : "해당 날짜의 핵심 업무로 정했어요." });
         const ctx = context();
         if (ctx) save(() => persistPriorities(ctx, tasks.filter((task) => task.isMit && !task.completed).map((task) => task.id)));
       },
@@ -210,7 +210,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       scheduleTask: (taskId, requestedStart) => {
         const state = get();
         if (state.planStatus === "closed") {
-          set({ notice: "오늘 일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
           return;
         }
         const task = state.tasks.find((item) => item.id === taskId);
@@ -240,7 +240,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       moveBlock: (blockId, start) => {
         const state = get();
         if (state.planStatus === "closed") {
-          set({ notice: "오늘 일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
@@ -277,7 +277,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       resizeBlock: (blockId, duration, originalDuration) => {
         const state = get();
         if (state.planStatus === "closed") {
-          set({ notice: "오늘 일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
@@ -316,7 +316,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       removeBlock: (blockId) => {
         const state = get();
         if (state.planStatus === "closed") {
-          set({ notice: "오늘 일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
@@ -327,7 +327,7 @@ export function createPlannerStore(seed: PlannerSeed) {
           blocks,
           selectedBlockId: blocks[0]?.id ?? null,
           notice: isCommittedChange
-            ? "시간표에서 뺐어요. 오늘 일과를 완료하면 최종 차이에 반영돼요."
+            ? "시간표에서 뺐어요. 일과를 완료하면 최종 차이에 반영돼요."
             : block.taskId
               ? "시간표에서 뺐어요. 작업은 브레인덤프에 남아 있어요."
               : "타임블록을 삭제했어요.",
@@ -343,7 +343,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       toggleBlockComplete: (blockId) => {
         const state = get();
         if (state.planStatus === "closed") {
-          set({ notice: "오늘 일과를 완료한 뒤에는 완료 상태를 바꿀 수 없어요." });
+          set({ notice: "일과를 완료한 뒤에는 완료 상태를 바꿀 수 없어요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
@@ -363,7 +363,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       updateActualMinutes: (blockId, minutes) => {
         const state = get();
         if (state.planStatus === "closed") {
-          set({ notice: "오늘 일과를 완료한 뒤에는 실제 시간을 바꿀 수 없어요." });
+          set({ notice: "일과를 완료한 뒤에는 실제 시간을 바꿀 수 없어요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
@@ -377,7 +377,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       addBufferAfter: (blockId) => {
         const state = get();
         if (state.planStatus === "closed") {
-          set({ notice: "오늘 일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
@@ -413,7 +413,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       confirmPlan: () => {
         const state = get();
         if (state.planStatus !== "draft") {
-          set({ notice: state.planStatus === "closed" ? "오늘 일과를 이미 완료했어요." : "이미 확정한 계획이에요." });
+          set({ notice: state.planStatus === "closed" ? "이 날짜의 일과를 이미 완료했어요." : "이미 확정한 계획이에요." });
           return;
         }
         if (!state.blocks.length) {
@@ -425,25 +425,29 @@ export function createPlannerStore(seed: PlannerSeed) {
           baselineStart: block.start,
           baselineDuration: block.duration,
         }));
-        set({ blocks, planStatus: "committed", notice: "오늘 계획을 확정했어요. 완료 전까지 자유롭게 조정할 수 있어요." });
+        set({ blocks, planStatus: "committed", notice: "선택한 날짜의 계획을 확정했어요. 완료 전까지 자유롭게 조정할 수 있어요." });
         const ctx = context();
         if (ctx) save(() => persistPlanCommit(ctx, blocks));
       },
       closePlan: () => {
         const state = get();
         if (state.planStatus === "draft") {
-          set({ notice: "먼저 오늘 계획을 확정해 주세요." });
+          set({ notice: "먼저 선택한 날짜의 계획을 확정해 주세요." });
           return;
         }
         if (state.planStatus === "closed") {
-          set({ notice: "오늘 일과를 이미 완료했어요." });
+          set({ notice: "이 날짜의 일과를 이미 완료했어요." });
+          return;
+        }
+        if (state.planDate > dateInTimeZone(state.timezone)) {
+          set({ notice: "미래 계획은 해당 날짜가 된 뒤 일과 완료할 수 있어요." });
           return;
         }
 
         const ctx = context();
         set({ planStatus: "closed", notice: "최종 일정과 확정 계획을 비교하고 있어요." });
         if (!ctx) {
-          set({ notice: "오늘 일과를 완료했어요. 최종 상태로 잠갔어요." });
+          set({ notice: "일과를 완료했어요. 최종 상태로 잠갔어요." });
           return;
         }
 
@@ -451,12 +455,12 @@ export function createPlannerStore(seed: PlannerSeed) {
           .then(() => persistPlanClose(ctx, state.blocks))
           .then((changeCount) => set({
             notice: changeCount > 0
-              ? `오늘 일과를 완료했어요. 최종 차이 ${changeCount}개를 기록했어요.`
-              : "오늘 일과를 완료했어요. 확정 계획과 최종 일정이 같아요.",
+              ? `일과를 완료했어요. 최종 차이 ${changeCount}개를 기록했어요.`
+              : "일과를 완료했어요. 확정 계획과 최종 일정이 같아요.",
           }))
           .catch(() => set({
             planStatus: "committed",
-            notice: "오늘 일과를 완료하지 못했어요. 연결을 확인하고 다시 시도해 주세요.",
+            notice: "일과를 완료하지 못했어요. 연결을 확인하고 다시 시도해 주세요.",
           }));
       },
       setNotice: (notice) => set({ notice }),

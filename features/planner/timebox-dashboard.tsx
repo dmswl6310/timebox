@@ -159,10 +159,10 @@ function CompactTask({ task, priority = false }: { task: Task; priority?: boolea
   return (
     <article ref={ref} className="note-task" data-dragging={isDragging} data-priority={priority} data-scheduled={scheduled}>
       <button ref={handleRef} className="note-drag" aria-label={`${task.title} 드래그`}><GripVertical size={15} /></button>
-      <button className="note-star" data-active={task.isMit} onClick={() => toggleMit(task.id)} aria-label="오늘의 우선순위 전환">
+      <button className="note-star" data-active={task.isMit} onClick={() => toggleMit(task.id)} aria-label="선택한 날짜의 우선순위 전환">
         <Star size={15} fill={task.isMit ? "currentColor" : "none"} />
       </button>
-      <button className="note-task-copy" onClick={() => scheduleTask(task.id)} title={scheduled ? "이미 시간표에 배치됨" : planStatus === "closed" ? "오늘 기록을 완료한 일정입니다" : "빈 시간에 배치"} disabled={scheduled || planStatus === "closed"}>
+      <button className="note-task-copy" onClick={() => scheduleTask(task.id)} title={scheduled ? "이미 시간표에 배치됨" : planStatus === "closed" ? "일과 기록을 완료한 일정입니다" : "빈 시간에 배치"} disabled={scheduled || planStatus === "closed"}>
         <strong>{task.title}</strong>
         <span><Tag size={11} /> {task.tag} · {task.estimate}분{scheduled && <em>시간표에 배치됨</em>}</span>
       </button>
@@ -205,7 +205,7 @@ function PrioritySection() {
   const priorities = tasks.filter((task) => task.isMit && !task.completed).slice(0, 3);
   return (
     <section className="paper-section priority-note">
-      <div className="paper-section-title"><span>TOP PRIORITIES</span><small>오늘 가장 중요한 3가지</small></div>
+      <div className="paper-section-title"><span>TOP PRIORITIES</span><small>이날 가장 중요한 3가지</small></div>
       <div className="priority-list">
         {[0, 1, 2].map((index) => priorities[index]
           ? <div className="priority-line" key={priorities[index].id}><b>{index + 1}</b><CompactTask task={priorities[index]} priority /></div>
@@ -330,7 +330,7 @@ function SelectedBlockBar() {
       <div><strong>{selected.title}</strong><span>{formatTime(selected.start)}–{formatTime(selected.start + selected.duration)}</span></div>
       {changed && <span className="change-pill">확정 후 변경됨</span>}
       {planStatus === "closed" ? (
-        <span className="closed-pill"><CheckCircle2 size={13} /> 오늘 기록 완료</span>
+        <span className="closed-pill"><CheckCircle2 size={13} /> 일과 기록 완료</span>
       ) : (
         <>
           <div className="resize-actions" aria-label="블록 크기 조정">
@@ -389,6 +389,7 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
   const [notesOpen, setNotesOpen] = useState(true);
   const planned = blocks.reduce((sum, block) => sum + block.duration, 0);
   const today = dateInTimeZone();
+  const isFuturePlan = planDate > today;
   const openDate = (offset: number) => {
     router.push(`/?date=${shiftIsoDate(planDate, offset)}`);
   };
@@ -405,6 +406,7 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
               <button onClick={() => openDate(1)} disabled={!userId} aria-label="다음 날짜"><ChevronRight size={16} /></button>
             </div>
             <span>{formatDuration(planned)} 계획됨</span>
+            {userId && planDate === today && <button className="today-jump" onClick={() => router.push(`/?date=${shiftIsoDate(today, 1)}`)}>내일 계획</button>}
             {userId && planDate !== today && <button className="today-jump" onClick={() => router.push("/")}>오늘</button>}
           </div>
         </div>
@@ -416,8 +418,8 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
           ) : (
             <>
               <button className="confirm-plan" data-committed="true" onClick={confirmPlan}><Check size={15} /> 계획 확정됨</button>
-              <button className="close-day" data-closed={planStatus === "closed"} onClick={closePlan} disabled={planStatus === "closed"}>
-                <CheckCircle2 size={15} /> {planStatus === "closed" ? "오늘 기록 완료" : "오늘 일과 완료"}
+              <button className="close-day" data-closed={planStatus === "closed"} data-future={isFuturePlan} onClick={closePlan} disabled={planStatus === "closed" || isFuturePlan} title={isFuturePlan ? "해당 날짜가 되면 일과를 완료할 수 있어요." : undefined}>
+                <CheckCircle2 size={15} /> {planStatus === "closed" ? "일과 기록 완료" : isFuturePlan ? "해당 날짜에 완료" : "일과 완료"}
               </button>
             </>
           )}
@@ -428,7 +430,7 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
         {notesOpen && <aside className="paper-notes"><PrioritySection /><BrainDumpSection /></aside>}
         <Timetable resolution={resolution} />
       </div>
-      <p className="planner-help">확정 후에도 자유롭게 조정하세요. ‘오늘 일과 완료’를 누르면 확정 계획과 최종 일정의 차이만 기록됩니다.</p>
+      <p className="planner-help">미래 날짜도 미리 계획할 수 있어요. ‘일과 완료’를 누르면 확정 계획과 최종 일정의 차이만 기록됩니다.</p>
     </main>
   );
 }

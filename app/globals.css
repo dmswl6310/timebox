@@ -2980,7 +2980,8 @@ textarea:focus-visible {
   color: #8e4e2d;
 }
 
-.close-day[data-closed="true"] {
+.close-day[data-closed="true"],
+.close-day[data-future="true"] {
   border-color: #cfd4cd;
   background: #edf0eb;
   color: #526057;

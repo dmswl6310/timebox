@@ -83,6 +83,19 @@ function formatDuration(minutes: number) {
   return rest ? `${hours}시간 ${rest}분` : `${hours}시간`;
 }
 
+function minuteFromTimetablePosition(position: { x: number; y: number }) {
+  const tracks = document.querySelectorAll<HTMLElement>(".hour-track[data-hour]");
+  for (const track of tracks) {
+    const rect = track.getBoundingClientRect();
+    if (!rect.width || position.y < rect.top || position.y > rect.bottom || position.x < rect.left || position.x > rect.right) continue;
+    const hour = Number(track.dataset.hour);
+    if (!Number.isFinite(hour)) return null;
+    const quarter = Math.max(0, Math.min(3, Math.floor(((position.x - rect.left) / rect.width) * 4)));
+    return hour * 60 + quarter * 15;
+  }
+  return null;
+}
+
 function dateLabel(date: string) {
   return new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "short" }).format(new Date(`${date}T12:00:00`));
 }
@@ -220,7 +233,7 @@ function BrainDumpSection() {
 
 function TimeSlot({ minutes, visible }: { minutes: number; visible: boolean }) {
   const planStatus = usePlannerStore((state) => state.planStatus);
-  const { ref, isDropTarget } = useDroppable({ id: `slot:${minutes}`, disabled: !visible || planStatus === "closed" });
+  const { ref, isDropTarget } = useDroppable({ id: `slot:${minutes}`, disabled: planStatus === "closed" });
   return <div ref={ref} className="quarter-slot" data-hidden={!visible} data-target={isDropTarget} aria-hidden={!visible} />;
 }
 
@@ -352,7 +365,7 @@ function Timetable({ resolution }: { resolution: 15 | 30 }) {
           return (
             <div className="hour-row" key={hour}>
               <time>{hour}</time>
-              <div className="hour-track">
+              <div className="hour-track" data-hour={hour}>
                 {[0, 15, 30, 45].map((offset) => <TimeSlot key={offset} minutes={hour * 60 + offset} visible={resolution === 15 || offset % 30 === 0} />)}
                 {segments.map((block) => <BlockSegment key={block.id} block={block} hour={hour} isLast={block.start + block.duration <= (hour + 1) * 60} />)}
               </div>
@@ -632,9 +645,11 @@ function TimeboxDashboardInner({ todayLabel }: { todayLabel: string }) {
     if (event.canceled) return;
     const source = event.operation.source;
     const targetId = String(event.operation.target?.id ?? "");
-    if (!source || !targetId.startsWith("slot:")) return;
-    const start = Number(targetId.slice(5));
-    if (!Number.isFinite(start)) return;
+    if (!source) return;
+    const pointerStart = minuteFromTimetablePosition(event.operation.position.current);
+    const targetStart = targetId.startsWith("slot:") ? Number(targetId.slice(5)) : null;
+    const start = pointerStart ?? targetStart;
+    if (start === null || !Number.isFinite(start)) return;
     if (source.data.kind === "task") scheduleTask(String(source.data.taskId), start);
     if (source.data.kind === "block") moveBlock(String(source.data.blockId), start - Number(source.data.segmentOffset ?? 0));
   };

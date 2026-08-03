@@ -52,7 +52,7 @@ const MOODS = ["매우 힘듦", "힘듦", "보통", "좋음", "아주 좋음"];
 type Page = "today" | "journal" | "records";
 type ServiceMode = "professional" | "paper";
 type RecordTab = "summary" | "activity";
-type Period = "day" | "week" | "month" | "quarter" | "year" | "all";
+type Period = "today" | "week" | "month" | "year" | "all";
 
 const MODE_STORAGE_KEY = "timebox-service-mode";
 const MODE_CHANGE_EVENT = "timebox-service-mode-change";
@@ -98,6 +98,17 @@ function minuteFromTimetablePosition(position: { x: number; y: number }) {
 
 function dateLabel(date: string) {
   return new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "short" }).format(new Date(`${date}T12:00:00`));
+}
+
+function monthLabel(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return `${year}년 ${monthNumber}월`;
+}
+
+function shiftMonth(month: string, offset: number) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, monthNumber - 1 + offset, 1));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function Logo() {
@@ -488,8 +499,8 @@ function JournalView({ onOpenRecords }: { onOpenRecords: () => void }) {
   );
 }
 
-function cutoffFor(period: Exclude<Period, "day" | "all">, today: string) {
-  const days = period === "week" ? 7 : period === "month" ? 30 : period === "quarter" ? 90 : 365;
+function cutoffFor(period: "week" | "year", today: string) {
+  const days = period === "week" ? 7 : 365;
   return shiftIsoDate(today, -(days - 1));
 }
 
@@ -554,6 +565,9 @@ function RecordsView({
   const mood = usePlannerStore((state) => state.mood);
   const [tab, setTab] = useState<RecordTab>(initialJournalSearch ? "activity" : "summary");
   const [period, setPeriod] = useState<Period>("month");
+  const today = dateInTimeZone();
+  const currentMonth = today.slice(0, 7);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [query, setQuery] = useState(initialJournalSearch ? "일기" : "");
   const [bundle, setBundle] = useState<RecordBundle>(() => demoRecords(planDate, tasks, blocks, journal, mood));
   const [loading, setLoading] = useState(Boolean(userId));
@@ -581,10 +595,10 @@ function RecordsView({
     return () => window.removeEventListener("keydown", focusSearch);
   }, []);
 
-  const today = dateInTimeZone();
   const isInPeriod = (date: string) => {
-    if (period === "day") return date === planDate;
+    if (period === "today") return date === today;
     if (date > today) return false;
+    if (period === "month") return date.startsWith(selectedMonth);
     return period === "all" || date >= cutoffFor(period, today);
   };
   const days = bundle.days.filter((day) => isInPeriod(day.date));
@@ -613,7 +627,16 @@ function RecordsView({
       <div className="records-heading"><div><p>ARCHIVE</p><h1>나의 기록</h1><span>일정, 일기, 변경 내역을 한곳에서 찾아보세요.</span></div></div>
       <div className="records-tools">
         <div className="record-tabs"><button data-active={tab === "summary"} onClick={() => setTab("summary")}><BarChart3 size={15} /> 요약 통계</button><button data-active={tab === "activity"} onClick={() => setTab("activity")}><History size={15} /> 활동 기록</button></div>
-        <div className="period-tabs">{(["day", "week", "month", "quarter", "year", "all"] as Period[]).map((item) => <button key={item} data-active={period === item} onClick={() => setPeriod(item)}>{item === "day" ? "하루" : item === "week" ? "1주" : item === "month" ? "1개월" : item === "quarter" ? "3개월" : item === "year" ? "1년" : "전체"}</button>)}</div>
+        <div className="period-control">
+          <div className="period-tabs">{(["today", "week", "month", "year", "all"] as Period[]).map((item) => <button key={item} data-active={period === item} onClick={() => setPeriod(item)}>{item === "today" ? "오늘" : item === "week" ? "1주" : item === "month" ? "월별" : item === "year" ? "1년" : "전체"}</button>)}</div>
+          {period === "month" && (
+            <div className="month-navigation" aria-label="통계 월 선택">
+              <button onClick={() => setSelectedMonth((month) => shiftMonth(month, -1))} aria-label="이전 달"><ChevronLeft size={14} /></button>
+              <strong>{monthLabel(selectedMonth)}</strong>
+              <button onClick={() => setSelectedMonth((month) => shiftMonth(month, 1))} aria-label="다음 달" disabled={selectedMonth >= currentMonth}><ChevronRight size={14} /></button>
+            </div>
+          )}
+        </div>
         <label className="records-search"><Search size={16} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="할 일, 태그, 일기, 날짜 검색" /><kbd>⌘ K</kbd></label>
       </div>
 

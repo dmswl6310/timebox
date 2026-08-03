@@ -3335,12 +3335,18 @@ textarea:focus-visible {
 /* Records: summary + searchable activity archive */
 .records-page { width: min(1120px, calc(100% - 40px)); }
 .records-tools { display: grid; grid-template-columns: auto auto minmax(260px, 1fr); align-items: center; gap: 10px; margin-bottom: 18px; }
+.period-control { position: relative; display: flex; align-items: center; gap: 7px; }
 .record-tabs,
 .period-tabs { display: flex; align-items: center; padding: 3px; border: 1px solid #d9dbd5; border-radius: 9px; background: #fff; }
 .record-tabs button,
 .period-tabs button { display: flex; align-items: center; gap: 5px; height: 31px; padding: 0 10px; border-radius: 6px; background: transparent; color: #787c77; font-size: 9px; font-weight: 850; }
 .record-tabs button[data-active="true"],
 .period-tabs button[data-active="true"] { background: #e9ece6; color: #263f34; }
+.month-navigation { display: flex; align-items: center; height: 37px; padding: 3px; border: 1px solid #d9dbd5; border-radius: 9px; background: #fff; }
+.month-navigation button { display: grid; place-items: center; width: 30px; height: 29px; border-radius: 6px; color: #687069; }
+.month-navigation button:hover:not(:disabled) { background: #eef1ec; color: #263f34; }
+.month-navigation button:disabled { color: #c1c5c0; cursor: default; }
+.month-navigation strong { min-width: 72px; font-size: 9px; text-align: center; }
 .records-search { display: flex; align-items: center; gap: 8px; height: 39px; padding: 0 10px; border: 1px solid #d9dbd5; border-radius: 9px; background: #fff; }
 .records-search input { min-width: 0; flex: 1; border: 0; outline: 0; font-size: 10px; }
 .records-search kbd { padding: 3px 5px; border: 1px solid #e0e1dc; border-radius: 4px; color: #989b96; font-size: 8px; }
@@ -3434,10 +3440,12 @@ textarea:focus-visible {
   .records-heading > div > span { display: block; margin: 7px 0 0; }
   .records-tools { grid-template-columns: 1fr; }
   .records-search { grid-column: 1; }
+  .period-control { display: grid; grid-template-columns: 1fr auto; }
   .record-tabs,
   .period-tabs { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
   .record-tabs button,
   .period-tabs button { justify-content: center; }
+  .month-navigation strong { min-width: 66px; }
   .summary-cards { grid-template-columns: repeat(2, 1fr); }
   .summary-grid { grid-template-columns: 1fr; }
   .activity-feed article { grid-template-columns: 1fr 34px minmax(0, 1fr); }

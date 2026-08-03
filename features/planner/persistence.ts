@@ -10,6 +10,13 @@ type PersistenceContext = {
   timezone: string;
 };
 
+type ScheduleChange = {
+  blockId: string;
+  type: "created" | "moved" | "resized" | "completed" | "reopened" | "cancelled";
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+};
+
 function toIso(planDate: string, minutes: number) {
   const hours = Math.floor(minutes / 60).toString().padStart(2, "0");
   const mins = (minutes % 60).toString().padStart(2, "0");
@@ -25,6 +32,47 @@ function assertSuccess(error: { message: string } | null) {
   if (error) throw new Error(error.message);
 }
 
+async function replaceTaskTag(
+  context: PersistenceContext,
+  task: Task,
+) {
+  const supabase = createClient();
+  const { data: existingTag, error: readError } = await supabase
+    .from("tags")
+    .select("id")
+    .eq("user_id", context.userId)
+    .ilike("name", task.tag)
+    .limit(1)
+    .maybeSingle();
+  assertSuccess(readError);
+
+  let tagId = existingTag?.id as string | undefined;
+  if (!tagId) {
+    const { data: createdTag, error: createError } = await supabase
+      .from("tags")
+      .insert({ user_id: context.userId, name: task.tag, color: task.color })
+      .select("id")
+      .single();
+    assertSuccess(createError);
+    if (!createdTag) throw new Error("태그를 만들지 못했습니다.");
+    tagId = createdTag.id;
+  }
+
+  const { error: deleteError } = await supabase
+    .from("task_tags")
+    .delete()
+    .eq("user_id", context.userId)
+    .eq("task_id", task.id);
+  assertSuccess(deleteError);
+
+  const { error: tagError } = await supabase.from("task_tags").insert({
+    user_id: context.userId,
+    task_id: task.id,
+    tag_id: tagId,
+  });
+  assertSuccess(tagError);
+}
+
 export async function persistTaskCreate(context: PersistenceContext, task: Task) {
   const supabase = createClient();
   const { error } = await supabase.from("tasks").insert({
@@ -37,6 +85,26 @@ export async function persistTaskCreate(context: PersistenceContext, task: Task)
     status: "inbox",
   });
   assertSuccess(error);
+  await replaceTaskTag(context, task);
+}
+
+export async function persistTaskUpdate(context: PersistenceContext, task: Task) {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("tasks")
+    .update({ title: task.title, estimate_minutes: task.estimate })
+    .eq("id", task.id)
+    .eq("user_id", context.userId);
+  assertSuccess(error);
+
+  const { error: blockError } = await supabase
+    .from("time_blocks")
+    .update({ title: task.title })
+    .eq("task_id", task.id)
+    .eq("user_id", context.userId)
+    .neq("status", "cancelled");
+  assertSuccess(blockError);
+  await replaceTaskTag(context, task);
 }
 
 export async function persistTaskDiscard(context: PersistenceContext, taskId: string) {
@@ -184,4 +252,50 @@ export async function persistReflection(
     { onConflict: "daily_plan_id" },
   );
   assertSuccess(error);
+}
+
+export async function persistPlanCommit(
+  context: PersistenceContext,
+  blocks: TimeBlock[],
+) {
+  const supabase = createClient();
+  const committedAt = new Date().toISOString();
+  const { error: planError } = await supabase
+    .from("daily_plans")
+    .update({ status: "committed", committed_at: committedAt })
+    .eq("id", context.dailyPlanId)
+    .eq("user_id", context.userId);
+  assertSuccess(planError);
+
+  await Promise.all(blocks.map(async (block) => {
+    const { error } = await supabase
+      .from("time_blocks")
+      .update({
+        baseline_start: toIso(context.planDate, block.start),
+        baseline_end: toIso(context.planDate, block.start + block.duration),
+      })
+      .eq("id", block.id)
+      .eq("user_id", context.userId);
+    assertSuccess(error);
+  }));
+}
+
+export async function persistScheduleChange(
+  context: PersistenceContext,
+  change: ScheduleChange,
+) {
+  const supabase = createClient();
+  const { error } = await supabase.from("schedule_change_events").insert({
+    user_id: context.userId,
+    daily_plan_id: context.dailyPlanId,
+    time_block_id: change.blockId,
+    change_type: change.type,
+    before_state: change.before ?? null,
+    after_state: change.after ?? null,
+  });
+
+  // 배포 전에 마이그레이션이 아직 적용되지 않은 짧은 구간에는 핵심 저장을 막지 않는다.
+  if (error && error.code !== "42P01" && error.code !== "PGRST205") {
+    throw new Error(error.message);
+  }
 }

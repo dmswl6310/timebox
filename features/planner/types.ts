@@ -1,4 +1,5 @@
 export type TagName = "자소서" | "면접" | "일상" | "메시지" | "성장" | "업무" | "미분류";
+export type PlanStatus = "draft" | "committed" | "closed";
 
 export type Task = {
   id: string;
@@ -19,6 +20,8 @@ export type TimeBlock = {
   title: string;
   start: number;
   duration: number;
+  baselineStart?: number;
+  baselineDuration?: number;
   actualMinutes?: number;
   type: BlockType;
   color: Task["color"];

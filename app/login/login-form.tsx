@@ -19,25 +19,29 @@ export function LoginForm() {
     event.preventDefault();
     setLoading(true);
     setMessage(null);
-    const supabase = createClient();
+    try {
+      const supabase = createClient();
 
-    if (mode === "signup") {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/` },
-      });
+      if (mode === "signup") {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/` },
+        });
+        if (error) return setMessage(error.message);
+        if (!data.session) return setMessage("확인 메일을 보냈어요. 메일의 링크를 눌러 가입을 완료해 주세요.");
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) return setMessage("이메일 또는 비밀번호를 확인해 주세요.");
+      }
+
+      router.replace("/");
+      router.refresh();
+    } catch {
+      setMessage("로그인 서비스에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    } finally {
       setLoading(false);
-      if (error) return setMessage(error.message);
-      if (!data.session) return setMessage("확인 메일을 보냈어요. 메일의 링크를 눌러 가입을 완료해 주세요.");
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      setLoading(false);
-      if (error) return setMessage("이메일 또는 비밀번호를 확인해 주세요.");
     }
-
-    router.replace("/");
-    router.refresh();
   }
 
   return (

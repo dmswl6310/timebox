@@ -18,6 +18,8 @@ type BlockRow = {
   title: string;
   planned_start: string;
   planned_end: string;
+  baseline_start: string | null;
+  baseline_end: string | null;
   kind: TimeBlock["type"];
   status: string;
 };
@@ -86,19 +88,21 @@ export async function getPlannerSeed(): Promise<PlannerSeed | null> {
   const timezone = "Asia/Seoul";
   const planDate = localDate(timezone);
 
-  let { data: plan, error: planError } = await supabase
+  const planResult = await supabase
     .from("daily_plans")
-    .select("id, timezone")
+    .select("id, timezone, status")
     .eq("user_id", userId)
     .eq("plan_date", planDate)
     .maybeSingle();
+  let plan = planResult.data;
+  const planError = planResult.error;
 
   if (planError) throw new Error(planError.message);
   if (!plan) {
     const result = await supabase
       .from("daily_plans")
       .insert({ user_id: userId, plan_date: planDate, timezone, status: "draft" })
-      .select("id, timezone")
+      .select("id, timezone, status")
       .single();
     if (result.error) throw new Error(result.error.message);
     plan = result.data;
@@ -120,7 +124,7 @@ export async function getPlannerSeed(): Promise<PlannerSeed | null> {
         .order("rank"),
       supabase
         .from("time_blocks")
-        .select("id,task_id,title,planned_start,planned_end,kind,status")
+        .select("id,task_id,title,planned_start,planned_end,baseline_start,baseline_end,kind,status")
         .eq("user_id", userId)
         .eq("daily_plan_id", plan.id)
         .neq("status", "cancelled")
@@ -201,6 +205,17 @@ export async function getPlannerSeed(): Promise<PlannerSeed | null> {
           (new Date(row.planned_end).getTime() - new Date(row.planned_start).getTime()) / 60_000,
         ),
       ),
+      baselineStart: row.baseline_start
+        ? minutesInZone(row.baseline_start, plan.timezone)
+        : undefined,
+      baselineDuration: row.baseline_start && row.baseline_end
+        ? Math.max(
+            15,
+            Math.round(
+              (new Date(row.baseline_end).getTime() - new Date(row.baseline_start).getTime()) / 60_000,
+            ),
+          )
+        : undefined,
       actualMinutes: actualByBlock.get(row.id),
       type: row.kind,
       color: blockColor(row.kind, task),
@@ -218,5 +233,6 @@ export async function getPlannerSeed(): Promise<PlannerSeed | null> {
     selectedBlockId: blocks[0]?.id ?? null,
     journal: reflectionResult.data?.content ?? "",
     mood: reflectionResult.data?.mood ?? 3,
+    planStatus: plan.status as PlannerSeed["planStatus"],
   };
 }

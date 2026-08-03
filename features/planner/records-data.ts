@@ -1,6 +1,7 @@
 "use client";
 
 import { createClient } from "@/lib/supabase/client";
+import { dateInTimeZone } from "@/lib/date";
 
 export type ActivityKind = "plan" | "task" | "schedule" | "journal";
 
@@ -38,12 +39,7 @@ function minutesBetween(start: string, end: string | null) {
 }
 
 function localDate(iso: string) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(iso));
+  return dateInTimeZone("Asia/Seoul", new Date(iso));
 }
 
 function timeLabel(iso: string) {

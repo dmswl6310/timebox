@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import { dateInTimeZone } from "@/lib/date";
 import {
   persistActualMinutes,
   persistBlockCancel,
@@ -65,12 +66,7 @@ const demoBlocks: TimeBlock[] = [
 export const demoSeed: PlannerSeed = {
   userId: null,
   dailyPlanId: null,
-  planDate: new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date()),
+  planDate: dateInTimeZone(),
   timezone: "Asia/Seoul",
   tasks: demoTasks,
   blocks: demoBlocks,
@@ -104,8 +100,8 @@ export type PlannerState = PlannerSeed & {
   setNotice: (value: string | null) => void;
 };
 
-function overlaps(blocks: TimeBlock[], start: number, duration: number) {
-  return blocks.some((block) => start < block.start + block.duration && start + duration > block.start);
+function overlaps(blocks: TimeBlock[], start: number, duration: number, ignoredBlockId?: string) {
+  return blocks.some((block) => block.id !== ignoredBlockId && start < block.start + block.duration && start + duration > block.start);
 }
 
 function nextAvailableStart(blocks: TimeBlock[], duration: number) {
@@ -210,6 +206,10 @@ export function createPlannerStore(seed: PlannerSeed) {
         }
         const duration = task.estimate;
         const desiredStart = requestedStart ?? nextAvailableStart(state.blocks, duration);
+        if (requestedStart !== undefined && overlaps(state.blocks, desiredStart, duration)) {
+          set({ notice: "이미 다른 일정이 있는 시간이에요. 빈 칸에 배치해 주세요." });
+          return;
+        }
         const block: TimeBlock = {
           id: crypto.randomUUID(), taskId: task.id, title: task.title,
           start: Math.max(5 * 60, Math.min(desiredStart, 24 * 60 - duration)),
@@ -234,6 +234,10 @@ export function createPlannerStore(seed: PlannerSeed) {
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
         const safeStart = Math.max(5 * 60, Math.min(start, 24 * 60 - block.duration));
+        if (overlaps(state.blocks, safeStart, block.duration, blockId)) {
+          set({ notice: "다른 일정과 겹칠 수 없어요. 빈 시간으로 옮겨 주세요." });
+          return;
+        }
         set({ blocks: state.blocks.map((item) => item.id === blockId ? { ...item, start: safeStart } : item), selectedBlockId: blockId, notice: "타임블록 시간을 옮겼어요." });
         const ctx = context();
         if (ctx) {
@@ -255,6 +259,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         if (!block) return;
         const snapped = Math.round(duration / 15) * 15;
         const safeDuration = Math.max(15, Math.min(snapped, 24 * 60 - block.start));
+        if (overlaps(state.blocks, block.start, safeDuration, blockId)) return;
         set({
           blocks: state.blocks.map((item) => item.id === blockId ? { ...item, duration: safeDuration } : item),
           tasks: block.taskId
@@ -271,6 +276,16 @@ export function createPlannerStore(seed: PlannerSeed) {
         const previousDuration = originalDuration ?? block.duration;
         const snapped = Math.round(duration / 15) * 15;
         const safeDuration = Math.max(15, Math.min(snapped, 24 * 60 - block.start));
+        if (overlaps(state.blocks, block.start, safeDuration, blockId)) {
+          set({
+            blocks: state.blocks.map((item) => item.id === blockId ? { ...item, duration: previousDuration } : item),
+            tasks: block.taskId
+              ? state.tasks.map((task) => task.id === block.taskId ? { ...task, estimate: previousDuration } : task)
+              : state.tasks,
+            notice: "다음 일정과 겹치지 않는 범위에서만 늘릴 수 있어요.",
+          });
+          return;
+        }
         set({
           blocks: state.blocks.map((item) => item.id === blockId
             ? { ...item, duration: safeDuration }
@@ -346,12 +361,14 @@ export function createPlannerStore(seed: PlannerSeed) {
         const ctx = context();
         if (ctx) {
           save(persistBlockCompletion(ctx, block, completed));
-          track(persistScheduleChange(ctx, {
-            blockId,
-            type: completed ? "completed" : "reopened",
-            before: { status: block.status },
-            after: { status: completed ? "completed" : "scheduled" },
-          }));
+          if (state.planStatus !== "draft") {
+            track(persistScheduleChange(ctx, {
+              blockId,
+              type: completed ? "completed" : "reopened",
+              before: { status: block.status },
+              after: { status: completed ? "completed" : "scheduled" },
+            }));
+          }
         }
       },
 
@@ -369,7 +386,12 @@ export function createPlannerStore(seed: PlannerSeed) {
         const state = get();
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
-        const buffer: TimeBlock = { id: crypto.randomUUID(), title: "버퍼 타임", start: block.start + block.duration, duration: 15, type: "buffer", color: "green", status: "scheduled" };
+        const bufferStart = block.start + block.duration;
+        if (bufferStart + 15 > 24 * 60 || overlaps(state.blocks, bufferStart, 15)) {
+          set({ notice: "바로 뒤에 15분 버퍼를 넣을 빈 시간이 없어요." });
+          return;
+        }
+        const buffer: TimeBlock = { id: crypto.randomUUID(), title: "버퍼 타임", start: bufferStart, duration: 15, type: "buffer", color: "green", status: "scheduled" };
         set({ blocks: [...state.blocks, buffer], selectedBlockId: buffer.id, notice: "뒤에 15분 버퍼를 추가했어요." });
         const ctx = context();
         if (ctx) {

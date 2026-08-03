@@ -14,11 +14,14 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Copy,
   GripVertical,
   History,
   Inbox,
+  LoaderCircle,
   Minus,
   NotebookPen,
   PanelLeftClose,
@@ -32,6 +35,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { dateInTimeZone, shiftIsoDate } from "@/lib/date";
 import { FormEvent, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { loadRecordBundle, type ActivityKind, type RecordBundle } from "./records-data";
@@ -41,7 +46,7 @@ import type { TagName, Task, TimeBlock } from "./types";
 const DAY_START_HOUR = 5;
 const DAY_END_HOUR = 24;
 const TAG_OPTIONS: TagName[] = ["미분류", "업무", "일상", "자소서", "면접", "메시지", "성장"];
-const ESTIMATE_OPTIONS = [15, 30, 60] as const;
+const ESTIMATE_OPTIONS = [15, 30, 45, 60, 90, 120, 180] as const;
 const MOODS = ["매우 힘듦", "힘듦", "보통", "좋음", "아주 좋음"];
 
 type Page = "today" | "journal" | "records";
@@ -102,6 +107,12 @@ function CompactTask({ task, priority = false }: { task: Task; priority?: boolea
   const [tag, setTag] = useState<TagName>(task.tag);
   const [estimate, setEstimate] = useState(task.estimate);
   const scheduled = blocks.some((block) => block.taskId === task.id);
+  const beginEditing = () => {
+    setTitle(task.title);
+    setTag(task.tag);
+    setEstimate(task.estimate);
+    setEditing(true);
+  };
   const { ref, handleRef, isDragging } = useDraggable({
     id: `${priority ? "priority" : "task"}:${task.id}`,
     data: { kind: "task", taskId: task.id, title: task.title },
@@ -121,7 +132,7 @@ function CompactTask({ task, priority = false }: { task: Task; priority?: boolea
           <select value={tag} onChange={(event) => setTag(event.target.value as TagName)} aria-label="태그">
             {TAG_OPTIONS.map((option) => <option key={option}>{option}</option>)}
           </select>
-          <select value={estimate} onChange={(event) => setEstimate(Number(event.target.value))} aria-label="예상 시간">
+          <select value={estimate} onChange={(event) => setEstimate(Number(event.target.value))} aria-label="예상 시간" disabled={scheduled} title={scheduled ? "배치된 일정 블록의 끝을 끌어 시간을 바꿔 주세요." : undefined}>
             {ESTIMATE_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes}분</option>)}
           </select>
           <button onClick={save}><Check size={15} /> 저장</button>
@@ -141,7 +152,7 @@ function CompactTask({ task, priority = false }: { task: Task; priority?: boolea
         <strong>{task.title}</strong>
         <span><Tag size={11} /> {task.tag} · {task.estimate}분{scheduled && <em>시간표에 배치됨</em>}</span>
       </button>
-      <button className="icon-only note-edit" onClick={() => setEditing(true)} aria-label="할 일 수정"><Pencil size={14} /></button>
+      <button className="icon-only note-edit" onClick={beginEditing} aria-label="할 일 수정"><Pencil size={14} /></button>
       {!priority && <button className="icon-only note-delete" onClick={() => discardTask(task.id)} aria-label="휴지통으로 이동"><Trash2 size={14} /></button>}
     </article>
   );
@@ -343,17 +354,35 @@ function Timetable({ resolution }: { resolution: 15 | 30 }) {
 }
 
 function TodayView({ todayLabel }: { todayLabel: string }) {
+  const router = useRouter();
+  const userId = usePlannerStore((state) => state.userId);
+  const planDate = usePlannerStore((state) => state.planDate);
   const planStatus = usePlannerStore((state) => state.planStatus);
   const blocks = usePlannerStore((state) => state.blocks);
   const confirmPlan = usePlannerStore((state) => state.confirmPlan);
   const [resolution, setResolution] = useState<15 | 30>(30);
   const [notesOpen, setNotesOpen] = useState(true);
   const planned = blocks.reduce((sum, block) => sum + block.duration, 0);
+  const today = dateInTimeZone();
+  const openDate = (offset: number) => {
+    router.push(`/?date=${shiftIsoDate(planDate, offset)}`);
+  };
 
   return (
     <main className="today-page">
       <div className="planner-heading">
-        <div><p>DAILY PLANNER</p><h1>{todayLabel}</h1><span>{formatDuration(planned)} 계획됨</span></div>
+        <div className="planner-date-copy">
+          <p>DAILY PLANNER</p>
+          <div className="planner-date-line">
+            <div className="date-navigation">
+              <button onClick={() => openDate(-1)} disabled={!userId} aria-label="이전 날짜"><ChevronLeft size={16} /></button>
+              <h1>{todayLabel}</h1>
+              <button onClick={() => openDate(1)} disabled={!userId} aria-label="다음 날짜"><ChevronRight size={16} /></button>
+            </div>
+            <span>{formatDuration(planned)} 계획됨</span>
+            {userId && planDate !== today && <button className="today-jump" onClick={() => router.push("/")}>오늘</button>}
+          </div>
+        </div>
         <div className="planner-heading-actions">
           <button className="notes-toggle" onClick={() => setNotesOpen((open) => !open)}>{notesOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}{notesOpen ? "메모 닫기" : "메모 열기"}</button>
           <div className="resolution-switch"><span>눈금</span><button data-active={resolution === 30} onClick={() => setResolution(30)}>30분</button><button data-active={resolution === 15} onClick={() => setResolution(15)}>15분</button></div>
@@ -417,12 +446,7 @@ function JournalView({ onOpenRecords }: { onOpenRecords: () => void }) {
 function cutoffFor(period: Period) {
   if (period === "all") return "0000-01-01";
   if (period === "day") {
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Seoul",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
+    return dateInTimeZone();
   }
   const date = new Date();
   const days = period === "week" ? 7 : period === "month" ? 30 : period === "quarter" ? 90 : 365;
@@ -568,9 +592,11 @@ function TimeboxDashboardInner({ todayLabel }: { todayLabel: string }) {
   const notice = usePlannerStore((state) => state.notice);
   const setNotice = usePlannerStore((state) => state.setNotice);
   const userId = usePlannerStore((state) => state.userId);
+  const dailyPlanId = usePlannerStore((state) => state.dailyPlanId);
   const [page, setPage] = useState<Page>("today");
   const serviceMode = useSyncExternalStore(subscribeServiceMode, getServiceModeSnapshot, () => "paper");
   const [recordsIntent, setRecordsIntent] = useState<"all" | "journal">("all");
+  const [sharing, setSharing] = useState(false);
   const openPage = (nextPage: Page) => {
     if (nextPage === "records") setRecordsIntent("all");
     setPage(nextPage);
@@ -599,9 +625,34 @@ function TimeboxDashboardInner({ todayLabel }: { todayLabel: string }) {
   }, [notice, setNotice]);
 
   const shareSchedule = async () => {
-    const shareUrl = `${window.location.origin}/?share=today`;
-    try { await navigator.clipboard.writeText(shareUrl); setNotice("공유 링크를 복사했어요."); }
-    catch { setNotice("공유 링크를 만들었어요."); }
+    if (!userId || !dailyPlanId) {
+      setNotice("공유 링크는 로그인 후 만들 수 있어요.");
+      return;
+    }
+    setSharing(true);
+    try {
+      const response = await fetch("/api/shares", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dailyPlanId }),
+      });
+      const result = await response.json() as { path?: string; error?: string };
+      if (!response.ok || !result.path) throw new Error(result.error ?? "공유 링크를 만들지 못했어요.");
+      const shareUrl = new URL(result.path, window.location.origin).toString();
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else if (navigator.share) {
+        await navigator.share({ title: "Timebox 일정", text: "오늘의 타임박스 일정", url: shareUrl });
+      } else {
+        throw new Error("브라우저에서 링크 복사를 지원하지 않아요.");
+      }
+      setNotice("공유 링크를 복사했어요.");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setNotice(error instanceof Error ? error.message : "공유 링크를 만들지 못했어요.");
+    } finally {
+      setSharing(false);
+    }
   };
 
   const signOut = async () => {
@@ -622,7 +673,7 @@ function TimeboxDashboardInner({ todayLabel }: { todayLabel: string }) {
               <button data-active={serviceMode === "professional"} onClick={() => changeServiceMode("professional")} title="분리된 카드형 일잘러 모드"><BriefcaseBusiness size={14} /><span>일잘러</span></button>
               <button data-active={serviceMode === "paper"} onClick={() => changeServiceMode("paper")} title="손글씨 종이 플래너 모드"><NotebookPen size={14} /><span>종이</span></button>
             </div>
-            <button onClick={shareSchedule}><Copy size={15} /><span>공유</span></button><button className="paper-avatar" onClick={signOut} title="로그아웃">J</button>
+            <button onClick={shareSchedule} disabled={sharing}>{sharing ? <LoaderCircle className="spin" size={15} /> : <Copy size={15} />}<span>{sharing ? "생성 중" : "공유"}</span></button><button className="paper-avatar" onClick={signOut} title="로그아웃">J</button>
           </div>
         </header>
         {page === "today" && <TodayView todayLabel={todayLabel} />}
@@ -636,6 +687,6 @@ function TimeboxDashboardInner({ todayLabel }: { todayLabel: string }) {
   );
 }
 
-export function TimeboxDashboard({ todayLabel, seed }: { todayLabel: string; currentMinutes: number; seed: PlannerSeed }) {
-  return <PlannerStoreProvider seed={seed}><TimeboxDashboardInner todayLabel={todayLabel} /></PlannerStoreProvider>;
+export function TimeboxDashboard({ todayLabel, seed }: { todayLabel: string; seed: PlannerSeed }) {
+  return <PlannerStoreProvider key={seed.dailyPlanId ?? seed.planDate} seed={seed}><TimeboxDashboardInner todayLabel={todayLabel} /></PlannerStoreProvider>;
 }

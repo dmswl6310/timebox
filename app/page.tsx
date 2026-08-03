@@ -1,41 +1,30 @@
 import { redirect } from "next/navigation";
 import { TimeboxDashboard } from "@/features/planner/timebox-dashboard";
 import { getPlannerSeed } from "@/features/planner/server-data";
+import { dateInTimeZone, isIsoDate, koreanDateLabel } from "@/lib/date";
 
 export const dynamic = "force-dynamic";
 
-function getSeoulDate() {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    weekday: "short",
-  }).formatToParts(now);
-  const value = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  const time = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Seoul",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(now).split(":");
-  return {
-    label: `${value("month")} ${value("day")}${value("weekday") ? ` · ${value("weekday")}` : ""}`,
-    minutes: (Number(time[0]) % 24) * 60 + Number(time[1]),
-  };
+function todayInSeoul() {
+  return dateInTimeZone();
 }
 
-export default async function Home() {
-  const today = getSeoulDate();
-  const seed = await getPlannerSeed();
+function validPlanDate(value: string | string[] | undefined) {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return isIsoDate(candidate) ? candidate : todayInSeoul();
+}
+
+type HomeProps = { searchParams: Promise<{ date?: string | string[] }> };
+
+export default async function Home({ searchParams }: HomeProps) {
+  const params = await searchParams;
+  const planDate = validPlanDate(params.date);
+  const seed = await getPlannerSeed(planDate);
   if (!seed) redirect("/login");
 
   return (
     <TimeboxDashboard
-      todayLabel={today.label}
-      currentMinutes={today.minutes}
+      todayLabel={koreanDateLabel(planDate)}
       seed={seed}
     />
   );

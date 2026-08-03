@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { dateInTimeZone } from "@/lib/date";
 import type { PlannerSeed } from "./store";
 import type { TagName, Task, TimeBlock } from "./types";
 
@@ -39,15 +40,6 @@ const tagColors: Record<string, Task["color"]> = {
   업무: "blue",
 };
 
-function localDate(timezone: string) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-
 function minutesInZone(iso: string, timezone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
@@ -79,14 +71,14 @@ function blockColor(kind: TimeBlock["type"], task?: Task) {
   return "slate" as const;
 }
 
-export async function getPlannerSeed(): Promise<PlannerSeed | null> {
+export async function getPlannerSeed(requestedPlanDate?: string): Promise<PlannerSeed | null> {
   const supabase = await createClient();
   const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
   if (claimsError || !claimsData?.claims?.sub) return null;
 
   const userId = claimsData.claims.sub;
   const timezone = "Asia/Seoul";
-  const planDate = localDate(timezone);
+  const planDate = requestedPlanDate ?? dateInTimeZone(timezone);
 
   const planResult = await supabase
     .from("daily_plans")
@@ -101,21 +93,18 @@ export async function getPlannerSeed(): Promise<PlannerSeed | null> {
   if (!plan) {
     const result = await supabase
       .from("daily_plans")
-      .insert({ user_id: userId, plan_date: planDate, timezone, status: "draft" })
+      .upsert(
+        { user_id: userId, plan_date: planDate, timezone, status: "draft" },
+        { onConflict: "user_id,plan_date" },
+      )
       .select("id, timezone, status")
       .single();
     if (result.error) throw new Error(result.error.message);
     plan = result.data;
   }
 
-  const [tasksResult, prioritiesResult, blocksResult, sessionsResult, reflectionResult] =
+  const [prioritiesResult, blocksResult, reflectionResult] =
     await Promise.all([
-      supabase
-        .from("tasks")
-        .select("id,title,estimate_minutes,energy_required,status")
-        .eq("user_id", userId)
-        .eq("status", "inbox")
-        .order("created_at", { ascending: false }),
       supabase
         .from("daily_priorities")
         .select("task_id,rank")
@@ -130,10 +119,6 @@ export async function getPlannerSeed(): Promise<PlannerSeed | null> {
         .neq("status", "cancelled")
         .order("planned_start"),
       supabase
-        .from("work_sessions")
-        .select("time_block_id,started_at,ended_at")
-        .eq("user_id", userId),
-      supabase
         .from("daily_reflections")
         .select("content,mood")
         .eq("user_id", userId)
@@ -141,9 +126,33 @@ export async function getPlannerSeed(): Promise<PlannerSeed | null> {
         .maybeSingle(),
     ]);
 
-  for (const result of [tasksResult, prioritiesResult, blocksResult, sessionsResult, reflectionResult]) {
+  for (const result of [prioritiesResult, blocksResult, reflectionResult]) {
     if (result.error) throw new Error(result.error.message);
   }
+
+  const blockIds = (blocksResult.data ?? []).map((block) => block.id);
+  const blockTaskIds = [...new Set((blocksResult.data ?? []).flatMap((block) => block.task_id ? [block.task_id] : []))];
+  let tasksQuery = supabase
+    .from("tasks")
+    .select("id,title,estimate_minutes,energy_required,status")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  tasksQuery = blockTaskIds.length
+    ? tasksQuery.or(`status.eq.inbox,id.in.(${blockTaskIds.join(",")})`)
+    : tasksQuery.eq("status", "inbox");
+
+  const [tasksResult, sessionsResult] = await Promise.all([
+    tasksQuery,
+    blockIds.length
+      ? supabase
+          .from("work_sessions")
+          .select("time_block_id,started_at,ended_at")
+          .eq("user_id", userId)
+          .in("time_block_id", blockIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (tasksResult.error) throw new Error(tasksResult.error.message);
+  if (sessionsResult.error) throw new Error(sessionsResult.error.message);
 
   const taskRows = (tasksResult.data ?? []) as TaskRow[];
   const taskIds = taskRows.map((task) => task.id);
@@ -175,7 +184,7 @@ export async function getPlannerSeed(): Promise<PlannerSeed | null> {
       color: tagColors[tagName] ?? "slate",
       energy: energyLabel(row.energy_required),
       isMit: priorityIds.has(row.id),
-      completed: false,
+      completed: row.status === "completed",
     };
   });
 

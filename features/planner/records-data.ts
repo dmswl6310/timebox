@@ -51,11 +51,20 @@ function minuteOfDayLabel(minutes: number) {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
+function timeInZoneLabel(iso: string, timezone: string) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(iso));
+}
+
 export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
   const supabase = createClient();
   const { data: plans, error: planError } = await supabase
     .from("daily_plans")
-    .select("id,plan_date,status,committed_at,created_at")
+    .select("id,plan_date,status,timezone,committed_at,created_at")
     .eq("user_id", userId)
     .order("plan_date", { ascending: false })
     .limit(1000);
@@ -128,6 +137,7 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
   if (taskTagsResult.error) throw new Error(taskTagsResult.error.message);
 
   const planDateById = new Map(plans.map((plan) => [plan.id, plan.plan_date]));
+  const planTimezoneById = new Map(plans.map((plan) => [plan.id, plan.timezone]));
   const blockById = new Map(blocks.map((block) => [block.id, block]));
   const taskTag = new Map<string, string>();
   for (const row of (taskTagsResult.data ?? []) as unknown as Array<{
@@ -228,6 +238,28 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
         detail: "작업 완료",
       });
     }
+  }
+
+  for (const block of blocks) {
+    const date = planDateById.get(block.daily_plan_id);
+    if (!date) continue;
+    const timezone = planTimezoneById.get(block.daily_plan_id) ?? "Asia/Seoul";
+    const plannedMinutes = minutesBetween(block.planned_start, block.planned_end);
+    const actualMinutes = sessionsByBlock.get(block.id) ?? 0;
+    const details = [
+      `${timeInZoneLabel(block.planned_start, timezone)}–${timeInZoneLabel(block.planned_end, timezone)}`,
+      `계획 ${plannedMinutes}분`,
+    ];
+    if (actualMinutes > 0) details.push(`실제 ${actualMinutes}분`);
+    if (block.status === "completed") details.push("완료");
+    activities.push({
+      id: `block-${block.id}`,
+      occurredAt: block.planned_start,
+      date,
+      kind: "schedule",
+      title: block.title,
+      detail: details.join(" · "),
+    });
   }
 
   for (const reflection of reflections) {

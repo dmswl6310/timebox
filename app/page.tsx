@@ -14,7 +14,12 @@ function validPlanDate(value: string | string[] | undefined) {
   return isIsoDate(candidate) ? candidate : todayInSeoul();
 }
 
-type HomeProps = { searchParams: Promise<{ date?: string | string[] }> };
+type HomeProps = { searchParams: Promise<{ date?: string | string[]; view?: string | string[] }> };
+
+function validInitialView(value: string | string[] | undefined) {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return candidate === "journal" ? "journal" as const : "today" as const;
+}
 
 export default async function Home({ searchParams }: HomeProps) {
   const params = await searchParams;
@@ -26,6 +31,7 @@ export default async function Home({ searchParams }: HomeProps) {
     <TimeboxDashboard
       todayLabel={koreanDateLabel(planDate)}
       seed={seed}
+      initialPage={validInitialView(params.view)}
     />
   );
 }

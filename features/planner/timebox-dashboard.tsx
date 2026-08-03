@@ -488,15 +488,9 @@ function JournalView({ onOpenRecords }: { onOpenRecords: () => void }) {
   );
 }
 
-function cutoffFor(period: Period) {
-  if (period === "all") return "0000-01-01";
-  if (period === "day") {
-    return dateInTimeZone();
-  }
-  const date = new Date();
+function cutoffFor(period: Exclude<Period, "day" | "all">, today: string) {
   const days = period === "week" ? 7 : period === "month" ? 30 : period === "quarter" ? 90 : 365;
-  date.setDate(date.getDate() - days + 1);
-  return date.toISOString().slice(0, 10);
+  return shiftIsoDate(today, -(days - 1));
 }
 
 function activityIcon(kind: ActivityKind) {
@@ -531,13 +525,27 @@ function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journ
     }],
     tagMinutes: [...tagMinutes].map(([tag, minutes]) => ({ tag, date: planDate, ...minutes })),
     activities: [
+      ...blocks.map((block) => ({
+        id: `demo-block-${block.id}`,
+        occurredAt: `${planDate}T${formatTime(block.start)}:00+09:00`,
+        date: planDate,
+        kind: "schedule" as const,
+        title: block.title,
+        detail: `${formatTime(block.start)}–${formatTime(block.start + block.duration)} · 계획 ${block.duration}분${block.actualMinutes ? ` · 실제 ${block.actualMinutes}분` : ""}${block.status === "completed" ? " · 완료" : ""}`,
+      })),
       ...tasks.map((task) => ({ id: `demo-task-${task.id}`, occurredAt: `${planDate}T09:00:00`, date: planDate, kind: "task" as const, title: task.title, detail: `${task.tag} · 예상 ${task.estimate}분${task.completed ? " · 완료" : ""}` })),
       ...(journal.trim() ? [{ id: "demo-journal", occurredAt: `${planDate}T22:00:00`, date: planDate, kind: "journal" as const, title: `${planDate} 일기`, detail: journal }] : []),
     ],
   };
 }
 
-function RecordsView({ initialJournalSearch = false }: { initialJournalSearch?: boolean }) {
+function RecordsView({
+  initialJournalSearch = false,
+  onOpenRecord,
+}: {
+  initialJournalSearch?: boolean;
+  onOpenRecord: (date: string, destination: "today" | "journal") => void;
+}) {
   const userId = usePlannerStore((state) => state.userId);
   const planDate = usePlannerStore((state) => state.planDate);
   const tasks = usePlannerStore((state) => state.tasks);
@@ -573,9 +581,14 @@ function RecordsView({ initialJournalSearch = false }: { initialJournalSearch?: 
     return () => window.removeEventListener("keydown", focusSearch);
   }, []);
 
-  const cutoff = cutoffFor(period);
-  const days = bundle.days.filter((day) => day.date >= cutoff);
-  const activities = bundle.activities.filter((activity) => activity.date >= cutoff);
+  const today = dateInTimeZone();
+  const isInPeriod = (date: string) => {
+    if (period === "day") return date === planDate;
+    if (date > today) return false;
+    return period === "all" || date >= cutoffFor(period, today);
+  };
+  const days = bundle.days.filter((day) => isInPeriod(day.date));
+  const activities = bundle.activities.filter((activity) => isInPeriod(activity.date));
   const normalizedQuery = query.trim().toLocaleLowerCase("ko");
   const matches = (normalizedQuery ? bundle.activities : activities).filter((activity) => !normalizedQuery || `${activity.title} ${activity.detail} ${activity.date}`.toLocaleLowerCase("ko").includes(normalizedQuery));
   const planned = days.reduce((sum, day) => sum + day.plannedMinutes, 0);
@@ -585,7 +598,7 @@ function RecordsView({ initialJournalSearch = false }: { initialJournalSearch?: 
   const changes = days.reduce((sum, day) => sum + day.changeCount, 0);
   const journalDays = days.filter((day) => day.journal.trim()).length;
   const tagMap = new Map<string, { plannedMinutes: number; actualMinutes: number }>();
-  for (const item of bundle.tagMinutes.filter((item) => item.date >= cutoff)) {
+  for (const item of bundle.tagMinutes.filter((item) => isInPeriod(item.date))) {
     const current = tagMap.get(item.tag) ?? { plannedMinutes: 0, actualMinutes: 0 };
     tagMap.set(item.tag, {
       plannedMinutes: current.plannedMinutes + item.plannedMinutes,
@@ -608,7 +621,7 @@ function RecordsView({ initialJournalSearch = false }: { initialJournalSearch?: 
       {error && <div className="records-state error">{error}</div>}
 
       {query.trim() && (
-        <section className="search-results"><header><Search size={16} /><strong>검색 결과 {matches.length}개</strong></header>{matches.length ? matches.slice(0, 30).map((activity) => <article key={activity.id}><span data-kind={activity.kind}>{activityIcon(activity.kind)}</span><div><time>{activity.date}</time><strong>{activity.title}</strong><p>{activity.detail}</p></div></article>) : <p className="no-records">일정과 일기에서 일치하는 기록을 찾지 못했어요.</p>}</section>
+        <section className="search-results"><header><Search size={16} /><strong>검색 결과 {matches.length}개</strong></header>{matches.length ? matches.slice(0, 30).map((activity) => <article key={activity.id}><span data-kind={activity.kind}>{activityIcon(activity.kind)}</span><div><time>{activity.date}</time><strong>{activity.title}</strong><p>{activity.detail}</p><button className="record-open" onClick={() => onOpenRecord(activity.date, activity.kind === "journal" ? "journal" : "today")}>{activity.kind === "journal" ? "이 일기 열기" : "이날 일정 열기"}<ChevronRight size={13} /></button></div></article>) : <p className="no-records">일정과 일기에서 일치하는 기록을 찾지 못했어요.</p>}</section>
       )}
 
       {!query.trim() && tab === "summary" && (
@@ -621,13 +634,13 @@ function RecordsView({ initialJournalSearch = false }: { initialJournalSearch?: 
           </section>
           <div className="summary-grid">
             <section className="record-card"><header><div><Tag size={16} /><strong>태그별 계획·실제 시간</strong></div><small>실제 / 계획</small></header><div className="tag-bars">{tagTotals.length ? tagTotals.map(([tag, minutes]) => <div key={tag}><span>{tag}</span><i><b data-kind="planned" style={{ width: `${minutes.plannedMinutes / maxTag * 100}%` }} /><b data-kind="actual" style={{ width: `${minutes.actualMinutes / maxTag * 100}%` }} /></i><strong>{formatDuration(minutes.actualMinutes)}<small>/ {formatDuration(minutes.plannedMinutes)}</small></strong></div>) : <p className="no-records">아직 태그별 기록이 없어요.</p>}</div></section>
-            <section className="record-card"><header><div><CalendarDays size={16} /><strong>날짜별 흐름</strong></div><small>최근 기록</small></header><div className="day-history">{days.length ? days.slice(0, 12).map((day) => <article key={day.date}><time>{dateLabel(day.date)}</time><div><span style={{ width: `${day.totalBlocks ? day.completedBlocks / day.totalBlocks * 100 : 0}%` }} /></div><strong>{day.totalBlocks ? Math.round(day.completedBlocks / day.totalBlocks * 100) : 0}%</strong>{day.journal && <BookOpenText size={13} />}</article>) : <p className="no-records">아직 날짜별 기록이 없어요.</p>}</div></section>
+            <section className="record-card"><header><div><CalendarDays size={16} /><strong>날짜별 흐름</strong></div><small>최근 기록</small></header><div className="day-history">{days.length ? days.slice(0, 12).map((day) => <button key={day.date} onClick={() => onOpenRecord(day.date, "today")} aria-label={`${dateLabel(day.date)} 일정 열기`}><time>{dateLabel(day.date)}</time><div><span style={{ width: `${day.totalBlocks ? day.completedBlocks / day.totalBlocks * 100 : 0}%` }} /></div><strong>{day.totalBlocks ? Math.round(day.completedBlocks / day.totalBlocks * 100) : 0}%</strong>{day.journal && <BookOpenText size={13} />}<ChevronRight size={12} /></button>) : <p className="no-records">아직 날짜별 기록이 없어요.</p>}</div></section>
           </div>
         </div>
       )}
 
       {!query.trim() && tab === "activity" && (
-        <section className="activity-feed">{matches.length ? matches.map((activity, index) => <article key={activity.id}><div className="activity-date">{index === 0 || matches[index - 1].date !== activity.date ? dateLabel(activity.date) : ""}</div><span className="activity-icon" data-kind={activity.kind}>{activityIcon(activity.kind)}</span><div><time>{new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(new Date(activity.occurredAt))}</time><strong>{activity.title}</strong><p>{activity.detail}</p></div></article>) : <p className="no-records">선택한 기간에 활동 기록이 없어요.</p>}</section>
+        <section className="activity-feed">{matches.length ? matches.map((activity, index) => <article key={activity.id}><div className="activity-date">{index === 0 || matches[index - 1].date !== activity.date ? dateLabel(activity.date) : ""}</div><span className="activity-icon" data-kind={activity.kind}>{activityIcon(activity.kind)}</span><div><time>{new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(new Date(activity.occurredAt))}</time><strong>{activity.title}</strong><p>{activity.detail}</p><button className="record-open" onClick={() => onOpenRecord(activity.date, activity.kind === "journal" ? "journal" : "today")}>{activity.kind === "journal" ? "이 일기 열기" : "이날 일정 열기"}<ChevronRight size={13} /></button></div></article>) : <p className="no-records">선택한 기간에 활동 기록이 없어요.</p>}</section>
       )}
     </main>
   );
@@ -643,20 +656,29 @@ function AppNav({ page, setPage }: { page: Page; setPage: (page: Page) => void }
   );
 }
 
-function TimeboxDashboardInner({ todayLabel }: { todayLabel: string }) {
+function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string; initialPage: Page }) {
+  const router = useRouter();
   const scheduleTask = usePlannerStore((state) => state.scheduleTask);
   const moveBlock = usePlannerStore((state) => state.moveBlock);
   const notice = usePlannerStore((state) => state.notice);
   const setNotice = usePlannerStore((state) => state.setNotice);
   const userId = usePlannerStore((state) => state.userId);
   const dailyPlanId = usePlannerStore((state) => state.dailyPlanId);
-  const [page, setPage] = useState<Page>("today");
+  const planDate = usePlannerStore((state) => state.planDate);
+  const [page, setPage] = useState<Page>(initialPage);
   const serviceMode = useSyncExternalStore(subscribeServiceMode, getServiceModeSnapshot, () => "paper");
   const [recordsIntent, setRecordsIntent] = useState<"all" | "journal">("all");
   const [sharing, setSharing] = useState(false);
   const openPage = (nextPage: Page) => {
     if (nextPage === "records") setRecordsIntent("all");
     setPage(nextPage);
+  };
+
+  const openRecord = (date: string, destination: "today" | "journal") => {
+    setPage(destination);
+    if (!userId) return;
+    const query = destination === "journal" ? `?date=${date}&view=journal` : `?date=${date}`;
+    if (date !== planDate || destination === "journal") router.push(`/${query}`);
   };
 
   const changeServiceMode = (mode: ServiceMode) => {
@@ -737,7 +759,7 @@ function TimeboxDashboardInner({ todayLabel }: { todayLabel: string }) {
         </header>
         {page === "today" && <TodayView todayLabel={todayLabel} />}
         {page === "journal" && <JournalView onOpenRecords={() => { setRecordsIntent("journal"); setPage("records"); }} />}
-        {page === "records" && <RecordsView initialJournalSearch={recordsIntent === "journal"} />}
+        {page === "records" && <RecordsView initialJournalSearch={recordsIntent === "journal"} onOpenRecord={openRecord} />}
         <AppNav page={page} setPage={openPage} />
         {notice && <div className="toast" role="status"><CheckCircle2 size={17} /> {notice}<button onClick={() => setNotice(null)} aria-label="알림 닫기"><X size={15} /></button></div>}
         <DragOverlay className="drag-overlay" dropAnimation={null}>{(source) => <div className="drag-preview"><GripVertical size={15} /><span>{String(source.data.title ?? "타임블록")}</span></div>}</DragOverlay>
@@ -746,6 +768,14 @@ function TimeboxDashboardInner({ todayLabel }: { todayLabel: string }) {
   );
 }
 
-export function TimeboxDashboard({ todayLabel, seed }: { todayLabel: string; seed: PlannerSeed }) {
-  return <PlannerStoreProvider key={seed.dailyPlanId ?? seed.planDate} seed={seed}><TimeboxDashboardInner todayLabel={todayLabel} /></PlannerStoreProvider>;
+export function TimeboxDashboard({
+  todayLabel,
+  seed,
+  initialPage = "today",
+}: {
+  todayLabel: string;
+  seed: PlannerSeed;
+  initialPage?: Page;
+}) {
+  return <PlannerStoreProvider key={`${seed.dailyPlanId ?? seed.planDate}-${initialPage}`} seed={seed}><TimeboxDashboardInner todayLabel={todayLabel} initialPage={initialPage} /></PlannerStoreProvider>;
 }

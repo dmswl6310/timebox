@@ -136,10 +136,13 @@ export function createPlannerStore(seed: PlannerSeed) {
       };
     };
     const pendingWrites = new Set<Promise<void>>();
-    const save = (promise: Promise<void>) => {
-      const pending = promise
+    let writeQueue = Promise.resolve();
+    const save = (operation: () => Promise<void>) => {
+      const pending = writeQueue
+        .then(operation)
         .catch(() => set({ notice: "저장하지 못했어요. 연결을 확인해 주세요." }))
         .finally(() => pendingWrites.delete(pending));
+      writeQueue = pending;
       pendingWrites.add(pending);
     };
 
@@ -158,7 +161,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         };
         set((state) => ({ tasks: [task, ...state.tasks], notice: "브레인덤프에 추가했어요." }));
         const ctx = context();
-        if (ctx) save(persistTaskCreate(ctx, task));
+        if (ctx) save(() => persistTaskCreate(ctx, task));
       },
 
       updateTask: (taskId, patch) => {
@@ -183,7 +186,7 @@ export function createPlannerStore(seed: PlannerSeed) {
           notice: "할 일 정보를 바꿨어요.",
         });
         const ctx = context();
-        if (ctx) save(persistTaskUpdate(ctx, nextTask, state.planStatus !== "closed"));
+        if (ctx) save(() => persistTaskUpdate(ctx, nextTask, state.planStatus !== "closed"));
       },
 
       toggleMit: (taskId) => {
@@ -201,7 +204,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         const tasks = state.tasks.map((task) => task.id === taskId ? { ...task, isMit: !task.isMit } : task);
         set({ tasks, notice: target.isMit ? "핵심 업무에서 뺐어요." : "오늘의 핵심 업무로 정했어요." });
         const ctx = context();
-        if (ctx) save(persistPriorities(ctx, tasks.filter((task) => task.isMit && !task.completed).map((task) => task.id)));
+        if (ctx) save(() => persistPriorities(ctx, tasks.filter((task) => task.isMit && !task.completed).map((task) => task.id)));
       },
 
       scheduleTask: (taskId, requestedStart) => {
@@ -230,7 +233,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         set({ blocks: [...state.blocks, block], selectedBlockId: block.id, mobileView: "schedule", notice: `${task.estimate}분 작업을 일정에 배치했어요.` });
         const ctx = context();
         if (ctx) {
-          save(persistBlockCreate(ctx, block));
+          save(() => persistBlockCreate(ctx, block));
         }
       },
 
@@ -250,7 +253,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         set({ blocks: state.blocks.map((item) => item.id === blockId ? { ...item, start: safeStart } : item), selectedBlockId: blockId, notice: "타임블록 시간을 옮겼어요." });
         const ctx = context();
         if (ctx) {
-          save(persistBlockMove(ctx, blockId, safeStart, block.duration));
+          save(() => persistBlockMove(ctx, blockId, safeStart, block.duration));
         }
       },
 
@@ -304,8 +307,9 @@ export function createPlannerStore(seed: PlannerSeed) {
         });
         const ctx = context();
         if (ctx) {
-          save(persistBlockMove(ctx, blockId, block.start, safeDuration));
-          if (block.taskId) save(persistTaskEstimate(ctx, block.taskId, safeDuration));
+          save(() => persistBlockMove(ctx, blockId, block.start, safeDuration));
+          const taskId = block.taskId;
+          if (taskId) save(() => persistTaskEstimate(ctx, taskId, safeDuration));
         }
       },
 
@@ -330,7 +334,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         });
         const ctx = context();
         if (ctx) {
-          save(persistBlockCancel(ctx, blockId));
+          save(() => persistBlockCancel(ctx, blockId));
         }
       },
 
@@ -352,7 +356,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         });
         const ctx = context();
         if (ctx) {
-          save(persistBlockCompletion(ctx, block, completed));
+          save(() => persistBlockCompletion(ctx, block, completed, block.actualMinutes ?? block.duration));
         }
       },
 
@@ -367,7 +371,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         const actualMinutes = Math.max(5, Math.min(minutes, 480));
         set({ blocks: state.blocks.map((item) => item.id === blockId ? { ...item, actualMinutes } : item) });
         const ctx = context();
-        if (ctx) save(persistActualMinutes(ctx, block, actualMinutes));
+        if (ctx) save(() => persistActualMinutes(ctx, block, actualMinutes));
       },
 
       addBufferAfter: (blockId) => {
@@ -387,14 +391,14 @@ export function createPlannerStore(seed: PlannerSeed) {
         set({ blocks: [...state.blocks, buffer], selectedBlockId: buffer.id, notice: "뒤에 15분 버퍼를 추가했어요." });
         const ctx = context();
         if (ctx) {
-          save(persistBlockCreate(ctx, buffer));
+          save(() => persistBlockCreate(ctx, buffer));
         }
       },
 
       discardTask: (taskId) => {
         set((state) => ({ tasks: state.tasks.filter((task) => task.id !== taskId), notice: "할 일을 휴지통으로 옮겼어요." }));
         const ctx = context();
-        if (ctx) save(persistTaskDiscard(ctx, taskId));
+        if (ctx) save(() => persistTaskDiscard(ctx, taskId));
       },
 
       setMobileView: (mobileView) => set({ mobileView }),
@@ -403,7 +407,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       saveJournal: (silent = false) => {
         const state = get();
         const ctx = context();
-        if (ctx) save(persistReflection(ctx, state.journal, state.mood));
+        if (ctx) save(() => persistReflection(ctx, state.journal, state.mood));
         if (!silent) set({ notice: "오늘의 기록을 저장했어요." });
       },
       confirmPlan: () => {
@@ -423,7 +427,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         }));
         set({ blocks, planStatus: "committed", notice: "오늘 계획을 확정했어요. 완료 전까지 자유롭게 조정할 수 있어요." });
         const ctx = context();
-        if (ctx) save(persistPlanCommit(ctx, blocks));
+        if (ctx) save(() => persistPlanCommit(ctx, blocks));
       },
       closePlan: () => {
         const state = get();

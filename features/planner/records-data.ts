@@ -28,7 +28,12 @@ export type DailyRecord = {
 export type RecordBundle = {
   activities: ActivityRecord[];
   days: DailyRecord[];
-  tagMinutes: Array<{ tag: string; date: string; minutes: number }>;
+  tagMinutes: Array<{
+    tag: string;
+    date: string;
+    plannedMinutes: number;
+    actualMinutes: number;
+  }>;
 };
 
 const EMPTY_BUNDLE: RecordBundle = { activities: [], days: [], tagMinutes: [] };
@@ -154,19 +159,25 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
     });
   }
 
-  const tagTotals = new Map<string, number>();
+  const tagTotals = new Map<string, { plannedMinutes: number; actualMinutes: number }>();
   for (const block of blocks) {
     const date = planDateById.get(block.daily_plan_id);
     const day = date ? dayMap.get(date) : undefined;
     if (!day) continue;
-    day.plannedMinutes += minutesBetween(block.planned_start, block.planned_end);
-    day.actualMinutes += sessionsByBlock.get(block.id) ?? 0;
+    const plannedMinutes = minutesBetween(block.planned_start, block.planned_end);
+    const actualMinutes = sessionsByBlock.get(block.id) ?? 0;
+    day.plannedMinutes += plannedMinutes;
+    day.actualMinutes += actualMinutes;
     day.totalBlocks += 1;
     if (block.status === "completed") day.completedBlocks += 1;
     const tag = block.task_id ? taskTag.get(block.task_id) : undefined;
     if (tag) {
       const key = `${date}\u0000${tag}`;
-      tagTotals.set(key, (tagTotals.get(key) ?? 0) + minutesBetween(block.planned_start, block.planned_end));
+      const current = tagTotals.get(key) ?? { plannedMinutes: 0, actualMinutes: 0 };
+      tagTotals.set(key, {
+        plannedMinutes: current.plannedMinutes + plannedMinutes,
+        actualMinutes: current.actualMinutes + actualMinutes,
+      });
     }
   }
 
@@ -264,10 +275,10 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
     activities,
     days: [...dayMap.values()].sort((a, b) => b.date.localeCompare(a.date)),
     tagMinutes: [...tagTotals.entries()]
-      .sort((a, b) => b[1] - a[1])
+      .sort((a, b) => b[1].actualMinutes - a[1].actualMinutes || b[1].plannedMinutes - a[1].plannedMinutes)
       .map(([key, minutes]) => {
         const [date, tag] = key.split("\u0000");
-        return { date, tag, minutes };
+        return { date, tag, ...minutes };
       }),
   };
 }

@@ -3359,11 +3359,13 @@ textarea:focus-visible {
 .search-results > header strong { font-size: 11px; }
 .record-card > header small { color: #969994; font-size: 8px; }
 .tag-bars { padding-top: 17px; }
-.tag-bars > div { display: grid; grid-template-columns: 60px 1fr 64px; align-items: center; gap: 9px; margin-bottom: 15px; }
+.tag-bars > div { display: grid; grid-template-columns: 60px 1fr 96px; align-items: center; gap: 9px; margin-bottom: 15px; }
 .tag-bars span { font-size: 9px; font-weight: 800; }
-.tag-bars i { height: 7px; overflow: hidden; border-radius: 20px; background: #eceee9; }
-.tag-bars i b { display: block; height: 100%; border-radius: inherit; background: #91bd45; }
+.tag-bars i { display: grid; grid-template-rows: repeat(2, 4px); gap: 2px; height: 10px; }
+.tag-bars i b { display: block; height: 4px; border-radius: 20px; background: #dfe4df; }
+.tag-bars i b[data-kind="actual"] { background: #91bd45; }
 .tag-bars strong { font-size: 9px; text-align: right; }
+.tag-bars strong small { display: inline; margin-left: 3px; color: #929690; font-size: 7px; font-weight: 700; }
 .day-history { padding-top: 10px; }
 .day-history article { display: grid; grid-template-columns: 86px 1fr 32px 16px; align-items: center; gap: 7px; min-height: 32px; }
 .day-history time { font-size: 8.5px; }

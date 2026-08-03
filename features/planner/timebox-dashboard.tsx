@@ -496,10 +496,16 @@ function activityIcon(kind: ActivityKind) {
 }
 
 function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journal: string, mood: number): RecordBundle {
-  const tagMinutes = new Map<string, number>();
+  const tagMinutes = new Map<string, { plannedMinutes: number; actualMinutes: number }>();
   for (const block of blocks) {
     const task = tasks.find((item) => item.id === block.taskId);
-    if (task) tagMinutes.set(task.tag, (tagMinutes.get(task.tag) ?? 0) + block.duration);
+    if (task) {
+      const current = tagMinutes.get(task.tag) ?? { plannedMinutes: 0, actualMinutes: 0 };
+      tagMinutes.set(task.tag, {
+        plannedMinutes: current.plannedMinutes + block.duration,
+        actualMinutes: current.actualMinutes + (block.actualMinutes ?? (block.status === "completed" ? block.duration : 0)),
+      });
+    }
   }
   return {
     days: [{
@@ -512,7 +518,7 @@ function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journ
       journal,
       changeCount: blocks.filter((block) => block.baselineStart !== undefined && (block.start !== block.baselineStart || block.duration !== block.baselineDuration)).length,
     }],
-    tagMinutes: [...tagMinutes].map(([tag, minutes]) => ({ tag, date: planDate, minutes })),
+    tagMinutes: [...tagMinutes].map(([tag, minutes]) => ({ tag, date: planDate, ...minutes })),
     activities: [
       ...tasks.map((task) => ({ id: `demo-task-${task.id}`, occurredAt: `${planDate}T09:00:00`, date: planDate, kind: "task" as const, title: task.title, detail: `${task.tag} · 예상 ${task.estimate}분${task.completed ? " · 완료" : ""}` })),
       ...(journal.trim() ? [{ id: "demo-journal", occurredAt: `${planDate}T22:00:00`, date: planDate, kind: "journal" as const, title: `${planDate} 일기`, detail: journal }] : []),
@@ -567,10 +573,16 @@ function RecordsView({ initialJournalSearch = false }: { initialJournalSearch?: 
   const total = days.reduce((sum, day) => sum + day.totalBlocks, 0);
   const changes = days.reduce((sum, day) => sum + day.changeCount, 0);
   const journalDays = days.filter((day) => day.journal.trim()).length;
-  const tagMap = new Map<string, number>();
-  for (const item of bundle.tagMinutes.filter((item) => item.date >= cutoff)) tagMap.set(item.tag, (tagMap.get(item.tag) ?? 0) + item.minutes);
-  const tagTotals = [...tagMap].sort((a, b) => b[1] - a[1]);
-  const maxTag = Math.max(1, ...tagTotals.map(([, minutes]) => minutes));
+  const tagMap = new Map<string, { plannedMinutes: number; actualMinutes: number }>();
+  for (const item of bundle.tagMinutes.filter((item) => item.date >= cutoff)) {
+    const current = tagMap.get(item.tag) ?? { plannedMinutes: 0, actualMinutes: 0 };
+    tagMap.set(item.tag, {
+      plannedMinutes: current.plannedMinutes + item.plannedMinutes,
+      actualMinutes: current.actualMinutes + item.actualMinutes,
+    });
+  }
+  const tagTotals = [...tagMap].sort((a, b) => b[1].actualMinutes - a[1].actualMinutes || b[1].plannedMinutes - a[1].plannedMinutes);
+  const maxTag = Math.max(1, ...tagTotals.flatMap(([, minutes]) => [minutes.plannedMinutes, minutes.actualMinutes]));
 
   return (
     <main className="records-page">
@@ -597,7 +609,7 @@ function RecordsView({ initialJournalSearch = false }: { initialJournalSearch?: 
             <article><span>기록한 일기</span><strong>{journalDays}일</strong><small>일정 변경 {changes}회</small></article>
           </section>
           <div className="summary-grid">
-            <section className="record-card"><header><div><Tag size={16} /><strong>태그별 계획 시간</strong></div><small>선택 기간</small></header><div className="tag-bars">{tagTotals.length ? tagTotals.map(([tag, minutes]) => <div key={tag}><span>{tag}</span><i><b style={{ width: `${minutes / maxTag * 100}%` }} /></i><strong>{formatDuration(minutes)}</strong></div>) : <p className="no-records">아직 태그별 기록이 없어요.</p>}</div></section>
+            <section className="record-card"><header><div><Tag size={16} /><strong>태그별 계획·실제 시간</strong></div><small>실제 / 계획</small></header><div className="tag-bars">{tagTotals.length ? tagTotals.map(([tag, minutes]) => <div key={tag}><span>{tag}</span><i><b data-kind="planned" style={{ width: `${minutes.plannedMinutes / maxTag * 100}%` }} /><b data-kind="actual" style={{ width: `${minutes.actualMinutes / maxTag * 100}%` }} /></i><strong>{formatDuration(minutes.actualMinutes)}<small>/ {formatDuration(minutes.plannedMinutes)}</small></strong></div>) : <p className="no-records">아직 태그별 기록이 없어요.</p>}</div></section>
             <section className="record-card"><header><div><CalendarDays size={16} /><strong>날짜별 흐름</strong></div><small>최근 기록</small></header><div className="day-history">{days.length ? days.slice(0, 12).map((day) => <article key={day.date}><time>{dateLabel(day.date)}</time><div><span style={{ width: `${day.totalBlocks ? day.completedBlocks / day.totalBlocks * 100 : 0}%` }} /></div><strong>{day.totalBlocks ? Math.round(day.completedBlocks / day.totalBlocks * 100) : 0}%</strong>{day.journal && <BookOpenText size={13} />}</article>) : <p className="no-records">아직 날짜별 기록이 없어요.</p>}</div></section>
           </div>
         </div>

@@ -200,6 +200,7 @@ export async function persistBlockCompletion(
   context: PersistenceContext,
   block: TimeBlock,
   completed: boolean,
+  actualMinutes: number,
 ) {
   const supabase = createClient();
   const { error: blockError } = await supabase
@@ -208,6 +209,10 @@ export async function persistBlockCompletion(
     .eq("id", block.id)
     .eq("user_id", context.userId);
   assertSuccess(blockError);
+
+  if (completed) {
+    await persistActualMinutes(context, block, actualMinutes);
+  }
 
   if (!block.taskId) return;
   const { error: taskError } = await supabase

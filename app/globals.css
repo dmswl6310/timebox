@@ -3357,6 +3357,21 @@ textarea:focus-visible {
 .summary-cards span { display: block; color: #737872; font-size: 9px; font-weight: 800; }
 .summary-cards strong { display: block; margin: 16px 0 5px; font-family: Georgia, serif; font-size: 25px; }
 .summary-cards small { color: #929690; font-size: 8px; }
+.weekly-goal-card { position: relative; display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 1fr) auto; align-items: center; gap: 16px; margin-bottom: 10px; padding: 16px 18px; border: 1px solid #d8ded8; border-radius: 10px; background: linear-gradient(120deg, #f8fbf5, #eef5ec); box-shadow: 0 5px 16px rgba(48, 65, 54, .05); }
+.weekly-goal-copy { display: flex; align-items: center; gap: 10px; color: #355443; }
+.weekly-goal-copy > div { min-width: 0; }
+.weekly-goal-copy span { display: block; color: #65746a; font-size: 8px; font-weight: 850; }
+.weekly-goal-copy strong { display: block; margin-top: 3px; font-family: Georgia, serif; font-size: 18px; }
+.weekly-goal-copy strong small { color: #78817b; font-size: 10px; }
+.weekly-goal-copy p { margin: 3px 0 0; color: #7f8781; font-size: 7.5px; }
+.weekly-goal-progress { height: 8px; overflow: hidden; border-radius: 10px; background: #dfe7df; }
+.weekly-goal-progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #6d8c78, #9abf50); transition: width 180ms ease; }
+.weekly-goal-form { display: flex; align-items: center; gap: 7px; }
+.weekly-goal-form label { display: flex; align-items: center; gap: 4px; color: #68736b; font-size: 8px; font-weight: 800; white-space: nowrap; }
+.weekly-goal-form input { width: 52px; height: 34px; border: 1px solid #d3dbd3; border-radius: 7px; background: #fff; text-align: center; font-size: 10px; font-weight: 800; }
+.weekly-goal-form button { display: flex; align-items: center; gap: 4px; min-height: 34px; padding: 0 10px; border-radius: 7px; background: #355443; color: #fff; font-size: 8px; font-weight: 850; }
+.weekly-goal-form button:disabled { opacity: .65; }
+.weekly-goal-message { position: absolute; right: 18px; bottom: 3px; margin: 0; color: #69766d; font-size: 7px; }
 .summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; min-width: 0; margin-top: 10px; }
 .record-card,
 .search-results,
@@ -3488,6 +3503,9 @@ button.month-day:hover { border-color: #aebcaf; background: #f1f5ef; }
   .period-tabs button { justify-content: center; }
   .month-navigation strong { min-width: 66px; }
   .summary-cards { grid-template-columns: repeat(2, 1fr); }
+  .weekly-goal-card { grid-template-columns: 1fr; gap: 11px; padding-bottom: 24px; }
+  .weekly-goal-form { justify-content: flex-end; }
+  .weekly-goal-message { right: 16px; bottom: 7px; }
   .summary-grid { grid-template-columns: minmax(0, 1fr); }
   .activity-feed article { grid-template-columns: 1fr 34px minmax(0, 1fr); }
   .activity-date { grid-column: 1 / -1; min-height: 0; padding-top: 10px; }

@@ -33,11 +33,12 @@ import {
   Search,
   Star,
   Tag,
+  Target,
   Trash2,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { dateInTimeZone, shiftIsoDate } from "@/lib/date";
+import { dateInTimeZone, shiftIsoDate, startOfIsoWeek } from "@/lib/date";
 import { FormEvent, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { loadRecordBundle, type ActivityKind, type RecordBundle } from "./records-data";
@@ -521,8 +522,7 @@ function JournalView({ onOpenRecords }: { onOpenRecords: () => void }) {
 }
 
 function cutoffFor(period: "week" | "year", today: string) {
-  const days = period === "week" ? 7 : 365;
-  return shiftIsoDate(today, -(days - 1));
+  return period === "week" ? startOfIsoWeek(today) : shiftIsoDate(today, -364);
 }
 
 function activityIcon(kind: ActivityKind) {
@@ -678,7 +678,13 @@ function RecordsView({
   const [period, setPeriod] = useState<Period>("month");
   const today = dateInTimeZone();
   const currentMonth = today.slice(0, 7);
+  const currentWeekStart = startOfIsoWeek(today);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [weeklyGoalMinutes, setWeeklyGoalMinutes] = useState<number | null>(userId ? null : 600);
+  const [weeklyGoalInput, setWeeklyGoalInput] = useState("10");
+  const [weeklyGoalLoading, setWeeklyGoalLoading] = useState(Boolean(userId));
+  const [weeklyGoalSaving, setWeeklyGoalSaving] = useState(false);
+  const [weeklyGoalMessage, setWeeklyGoalMessage] = useState("");
   const [query, setQuery] = useState(initialJournalSearch ? "일기" : "");
   const [bundle, setBundle] = useState<RecordBundle>(() => demoRecords(planDate, tasks, blocks, journal, mood));
   const [loading, setLoading] = useState(Boolean(userId));
@@ -694,6 +700,24 @@ function RecordsView({
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    let active = true;
+    fetch(`/api/goals/weekly?weekStart=${currentWeekStart}`, { cache: "no-store" })
+      .then(async (response) => {
+        const result = await response.json() as { goal?: { targetMinutes: number } | null; error?: string };
+        if (!response.ok) throw new Error(result.error ?? "주간 목표를 불러오지 못했어요.");
+        if (!active) return;
+        const target = result.goal?.targetMinutes ?? null;
+        setWeeklyGoalMinutes(target);
+        setWeeklyGoalInput(String((target ?? 600) / 60));
+        setWeeklyGoalMessage("");
+      })
+      .catch((reason: unknown) => { if (active) setWeeklyGoalMessage(reason instanceof Error ? reason.message : "주간 목표를 불러오지 못했어요."); })
+      .finally(() => { if (active) setWeeklyGoalLoading(false); });
+    return () => { active = false; };
+  }, [currentWeekStart, userId]);
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -732,6 +756,42 @@ function RecordsView({
   }
   const tagTotals = [...tagMap].sort((a, b) => b[1].actualMinutes - a[1].actualMinutes || b[1].plannedMinutes - a[1].plannedMinutes);
   const maxTag = Math.max(1, ...tagTotals.flatMap(([, minutes]) => [minutes.plannedMinutes, minutes.actualMinutes]));
+  const goalTarget = weeklyGoalMinutes ?? Math.round(Number(weeklyGoalInput || 10) * 60);
+  const goalProgress = goalTarget > 0 ? Math.round(actual / goalTarget * 100) : 0;
+
+  const saveWeeklyGoal = async () => {
+    const hours = Number(weeklyGoalInput);
+    const targetMinutes = Math.round(hours * 2) * 30;
+    if (!Number.isFinite(hours) || targetMinutes < 60 || targetMinutes > 10080) {
+      setWeeklyGoalMessage("목표는 1시간부터 168시간까지 30분 단위로 입력해 주세요.");
+      return;
+    }
+    setWeeklyGoalSaving(true);
+    setWeeklyGoalMessage("");
+    if (!userId) {
+      setWeeklyGoalMinutes(targetMinutes);
+      setWeeklyGoalInput(String(targetMinutes / 60));
+      setWeeklyGoalMessage("데모 목표를 바꿨어요.");
+      setWeeklyGoalSaving(false);
+      return;
+    }
+    try {
+      const response = await fetch("/api/goals/weekly", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ weekStart: currentWeekStart, targetMinutes }),
+      });
+      const result = await response.json() as { goal?: { targetMinutes: number }; error?: string };
+      if (!response.ok || !result.goal) throw new Error(result.error ?? "주간 목표를 저장하지 못했어요.");
+      setWeeklyGoalMinutes(result.goal.targetMinutes);
+      setWeeklyGoalInput(String(result.goal.targetMinutes / 60));
+      setWeeklyGoalMessage("이번 주 목표를 저장했어요.");
+    } catch (reason) {
+      setWeeklyGoalMessage(reason instanceof Error ? reason.message : "주간 목표를 저장하지 못했어요.");
+    } finally {
+      setWeeklyGoalSaving(false);
+    }
+  };
 
   return (
     <main className="records-page">
@@ -739,7 +799,7 @@ function RecordsView({
       <div className="records-tools">
         <div className="record-tabs"><button data-active={tab === "summary"} onClick={() => setTab("summary")}><BarChart3 size={15} /> 요약 통계</button><button data-active={tab === "activity"} onClick={() => setTab("activity")}><History size={15} /> 활동 기록</button></div>
         <div className="period-control">
-          <div className="period-tabs">{(["today", "week", "month", "year", "all"] as Period[]).map((item) => <button key={item} data-active={period === item} onClick={() => setPeriod(item)}>{item === "today" ? "오늘" : item === "week" ? "1주" : item === "month" ? "월별" : item === "year" ? "1년" : "전체"}</button>)}</div>
+          <div className="period-tabs">{(["today", "week", "month", "year", "all"] as Period[]).map((item) => <button key={item} data-active={period === item} onClick={() => setPeriod(item)}>{item === "today" ? "오늘" : item === "week" ? "이번 주" : item === "month" ? "월별" : item === "year" ? "1년" : "전체"}</button>)}</div>
           {period === "month" && (
             <div className="month-navigation" aria-label="통계 월 선택">
               <button onClick={() => setSelectedMonth((month) => shiftMonth(month, -1))} aria-label="이전 달"><ChevronLeft size={14} /></button>
@@ -760,6 +820,14 @@ function RecordsView({
 
       {!query.trim() && tab === "summary" && (
         <div className="records-summary">
+          {period === "week" && (
+            <section className="weekly-goal-card">
+              <div className="weekly-goal-copy"><Target size={18} /><div><span>이번 주 집중 목표</span><strong>{formatDuration(actual)} <small>/ {formatDuration(goalTarget)}</small></strong><p>{dateLabel(currentWeekStart)}–{dateLabel(shiftIsoDate(currentWeekStart, 6))} · {weeklyGoalLoading ? "목표 불러오는 중" : `${goalProgress}% 달성`}</p></div></div>
+              <div className="weekly-goal-progress"><span style={{ width: `${Math.min(100, goalProgress)}%` }} /></div>
+              <div className="weekly-goal-form"><label>목표 <input type="number" min="1" max="168" step="0.5" value={weeklyGoalInput} onChange={(event) => setWeeklyGoalInput(event.target.value)} aria-label="주간 목표 시간" />시간</label><button onClick={saveWeeklyGoal} disabled={weeklyGoalSaving}>{weeklyGoalSaving ? <LoaderCircle className="spin" size={13} /> : <Save size={13} />}저장</button></div>
+              {weeklyGoalMessage && <p className="weekly-goal-message">{weeklyGoalMessage}</p>}
+            </section>
+          )}
           <section className="summary-cards">
             <article><span>계획한 시간</span><strong>{formatDuration(planned)}</strong><small>{days.length}일의 기록</small></article>
             <article><span>실제 수행 시간</span><strong>{formatDuration(actual)}</strong><small>계획 대비 {planned ? Math.round(actual / planned * 100) : 0}%</small></article>

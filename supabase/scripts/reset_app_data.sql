@@ -7,12 +7,13 @@
 --
 -- 삭제되는 항목:
 --   - 프로필, 할 일, 태그, 날짜별 계획, 우선순위, 타임블록
---   - 실제 수행 시간, 일기, 공유 링크, 일정 변경 기록
+--   - 실제 수행 시간, 일기, 공유 링크, 주간 목표, 일정 변경 기록
 
 begin;
 
 truncate table
   public.schedule_change_events,
+  public.weekly_goals,
   public.work_sessions,
   public.daily_reflections,
   public.schedule_shares,
@@ -39,5 +40,6 @@ union all select 'time_blocks', count(*) from public.time_blocks
 union all select 'work_sessions', count(*) from public.work_sessions
 union all select 'daily_reflections', count(*) from public.daily_reflections
 union all select 'schedule_shares', count(*) from public.schedule_shares
+union all select 'weekly_goals', count(*) from public.weekly_goals
 union all select 'schedule_change_events', count(*) from public.schedule_change_events
 order by table_name;

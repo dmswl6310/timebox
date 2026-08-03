@@ -24,6 +24,12 @@ export function shiftIsoDate(value: string, days: number) {
   return date.toISOString().slice(0, 10);
 }
 
+export function startOfIsoWeek(value: string) {
+  const date = new Date(`${value}T12:00:00Z`);
+  const mondayOffset = (date.getUTCDay() + 6) % 7;
+  return shiftIsoDate(value, -mondayOffset);
+}
+
 export function koreanDateLabel(value: string, includeYear = false) {
   return new Intl.DateTimeFormat("ko-KR", {
     ...(includeYear ? { year: "numeric" as const } : {}),

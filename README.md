@@ -14,6 +14,7 @@
 - 계획 확정본과 `일과 완료` 시점의 최종 일정 차이 저장
 - 일기와 기분 자동 저장
 - 오늘·주·달력 월·연간·전체 통계, 완료율·일기·기분을 표시하는 월간 기록 달력, 태그별 계획·실제 시간 비교와 원래 날짜를 바로 여는 기록 검색
+- 월요일부터 일요일까지의 주간 집중 시간 목표 설정과 실제 수행 시간 달성률
 - 30일 동안 유효한 읽기 전용 일정 공유 링크와 생성·만료·취소 관리
 - 종이 플래너 모드와 일잘러 모드
 
@@ -67,6 +68,7 @@ app/
   demo/page.tsx               계정 없는 제품 데모
   api/shares/route.ts         공유 토큰 생성 API
   api/shares/[shareId]/       공유 링크 취소 API
+  api/goals/weekly/           주간 목표 조회·저장 API
   share/[token]/page.tsx      읽기 전용 공개 일정
 features/planner/
   server-data.ts              플래너 초기 데이터 조회
@@ -75,7 +77,7 @@ features/planner/
   store.tsx                   Zustand 도메인 상태와 명령
   tag-utils.ts                태그 정규화·색상·추천 규칙
   timebox-dashboard.tsx       클라이언트 UI와 상호작용
-supabase/migrations/          스키마, RLS, 지표, 공유, 변경 이력
+supabase/migrations/          스키마, RLS, 지표, 공유, 목표, 변경 이력
 supabase/scripts/             필요할 때만 실행하는 운영·초기화 SQL
 .github/workflows/ci.yml      Push·PR 자동 타입·린트·빌드 검사
 ```

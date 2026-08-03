@@ -19,6 +19,7 @@ import {
   persistTaskEstimate,
   persistTaskUpdate,
 } from "./persistence";
+import { colorForTag, normalizeTagName } from "./tag-utils";
 import type { MobileView, PlanStatus, TagName, Task, TimeBlock } from "./types";
 
 export type PlannerSeed = {
@@ -32,16 +33,6 @@ export type PlannerSeed = {
   journal: string;
   mood: number;
   planStatus: PlanStatus;
-};
-
-const tagColors: Record<TagName, Task["color"]> = {
-  자소서: "coral",
-  면접: "violet",
-  일상: "blue",
-  메시지: "amber",
-  성장: "green",
-  업무: "blue",
-  미분류: "slate",
 };
 
 const demoTasks: Task[] = [
@@ -154,9 +145,10 @@ export function createPlannerStore(seed: PlannerSeed) {
       addTask: (title, tag, estimate) => {
         const cleanTitle = title.trim();
         if (!cleanTitle) return;
+        const cleanTag = normalizeTagName(tag);
         const task: Task = {
           id: crypto.randomUUID(), title: cleanTitle, estimate,
-          tag, color: tagColors[tag], energy: "보통",
+          tag: cleanTag, color: colorForTag(cleanTag), energy: "보통",
           isMit: false, completed: false,
         };
         set((state) => ({ tasks: [task, ...state.tasks], notice: "브레인덤프에 추가했어요." }));
@@ -169,12 +161,13 @@ export function createPlannerStore(seed: PlannerSeed) {
         const target = state.tasks.find((task) => task.id === taskId);
         const cleanTitle = patch.title.trim();
         if (!target || !cleanTitle) return;
+        const cleanTag = normalizeTagName(patch.tag);
         const nextTask: Task = {
           ...target,
           title: cleanTitle,
-          tag: patch.tag,
+          tag: cleanTag,
           estimate: patch.estimate,
-          color: tagColors[patch.tag],
+          color: colorForTag(cleanTag),
         };
         set({
           tasks: state.tasks.map((task) => task.id === taskId ? nextTask : task),

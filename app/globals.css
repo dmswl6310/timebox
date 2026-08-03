@@ -3134,6 +3134,7 @@ textarea:focus-visible {
 }
 
 .brain-add-options select,
+.brain-add-options input,
 .note-task-editor select {
   border: 0;
   outline: 0;
@@ -3142,6 +3143,7 @@ textarea:focus-visible {
   font-size: 9px;
   font-weight: 750;
 }
+.brain-tag-input { width: 88px; min-width: 0; }
 
 .brain-list {
   min-height: 700px;
@@ -3200,6 +3202,8 @@ textarea:focus-visible {
 }
 .note-task-editor > input { width: 100%; padding: 4px; border: 0; border-bottom: 1px solid #ddd; outline: 0; font-size: 11px; }
 .note-task-editor > div { display: flex; align-items: center; gap: 5px; margin-top: 7px; }
+.note-tag-field { display: flex; align-items: center; gap: 3px; min-width: 0; color: #777b76; }
+.note-tag-field input { width: 76px; min-width: 0; border: 0; outline: 0; background: transparent; color: inherit; font-size: 9px; font-weight: 750; }
 .note-task-editor > div > button:not(.icon-only) { display: flex; align-items: center; gap: 3px; margin-left: auto; padding: 5px 8px; border-radius: 5px; background: #263f34; color: #fff; font-size: 9px; }
 
 .brain-empty { display: grid; place-items: center; padding: 60px 18px; color: #8c908a; text-align: center; }

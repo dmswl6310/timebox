@@ -30,15 +30,16 @@ async function replaceTaskTag(
   task: Task,
 ) {
   const supabase = createClient();
-  const { data: existingTag, error: readError } = await supabase
+  const { data: existingTags, error: readError } = await supabase
     .from("tags")
-    .select("id")
+    .select("id,name")
     .eq("user_id", context.userId)
-    .ilike("name", task.tag)
-    .limit(1)
-    .maybeSingle();
+    .limit(1000);
   assertSuccess(readError);
 
+  const existingTag = existingTags?.find(
+    (tag) => tag.name.localeCompare(task.tag, "ko", { sensitivity: "base" }) === 0,
+  );
   let tagId = existingTag?.id as string | undefined;
   if (!tagId) {
     const { data: createdTag, error: createError } = await supabase

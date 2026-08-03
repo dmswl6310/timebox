@@ -3,7 +3,8 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { dateInTimeZone } from "@/lib/date";
 import type { PlannerSeed } from "./store";
-import type { TagName, Task, TimeBlock } from "./types";
+import { normalizeTagName, savedTagColor } from "./tag-utils";
+import type { Task, TimeBlock } from "./types";
 
 type TaskRow = {
   id: string;
@@ -29,15 +30,6 @@ type SessionRow = {
   time_block_id: string;
   started_at: string;
   ended_at: string | null;
-};
-
-const tagColors: Record<string, Task["color"]> = {
-  자소서: "coral",
-  면접: "violet",
-  일상: "blue",
-  메시지: "amber",
-  성장: "green",
-  업무: "blue",
 };
 
 function minutesInZone(iso: string, timezone: string) {
@@ -175,13 +167,13 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
   const priorityIds = new Set((prioritiesResult.data ?? []).map((row) => row.task_id));
   const tasks: Task[] = taskRows.map((row) => {
     const tag = tagByTask.get(row.id);
-    const tagName = (tag?.name ?? "미분류") as TagName;
+    const tagName = normalizeTagName(tag?.name ?? "미분류");
     return {
       id: row.id,
       title: row.title,
       estimate: row.estimate_minutes ?? 30,
       tag: tagName,
-      color: tagColors[tagName] ?? "slate",
+      color: savedTagColor(tag?.color, tagName),
       energy: energyLabel(row.energy_required),
       isMit: priorityIds.has(row.id),
       completed: row.status === "completed",

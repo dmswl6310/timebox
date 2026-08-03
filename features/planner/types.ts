@@ -1,4 +1,5 @@
-export type TagName = "자소서" | "면접" | "일상" | "메시지" | "성장" | "업무" | "미분류";
+export type TagName = string;
+export type TaskColor = "coral" | "violet" | "blue" | "amber" | "green" | "slate";
 export type PlanStatus = "draft" | "committed" | "closed";
 
 export type Task = {
@@ -6,7 +7,7 @@ export type Task = {
   title: string;
   estimate: number;
   tag: TagName;
-  color: "coral" | "violet" | "blue" | "amber" | "green" | "slate";
+  color: TaskColor;
   energy: "낮음" | "보통" | "높음";
   isMit: boolean;
   completed: boolean;

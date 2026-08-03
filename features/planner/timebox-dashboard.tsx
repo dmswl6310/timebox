@@ -41,11 +41,11 @@ import { FormEvent, useEffect, useRef, useState, useSyncExternalStore, type Poin
 import { createClient } from "@/lib/supabase/client";
 import { loadRecordBundle, type ActivityKind, type RecordBundle } from "./records-data";
 import { PlannerStoreProvider, usePlannerStore, type PlannerSeed } from "./store";
+import { tagSuggestions } from "./tag-utils";
 import type { TagName, Task, TimeBlock } from "./types";
 
 const DAY_START_HOUR = 5;
 const DAY_END_HOUR = 24;
-const TAG_OPTIONS: TagName[] = ["미분류", "업무", "일상", "자소서", "면접", "메시지", "성장"];
 const ESTIMATE_OPTIONS = [15, 30, 45, 60, 90, 120, 180] as const;
 const MOODS = ["매우 힘듦", "힘듦", "보통", "좋음", "아주 좋음"];
 
@@ -109,7 +109,7 @@ function Logo() {
   );
 }
 
-function CompactTask({ task, priority = false }: { task: Task; priority?: boolean }) {
+function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOptions: string[]; priority?: boolean }) {
   const blocks = usePlannerStore((state) => state.blocks);
   const planStatus = usePlannerStore((state) => state.planStatus);
   const toggleMit = usePlannerStore((state) => state.toggleMit);
@@ -139,13 +139,16 @@ function CompactTask({ task, priority = false }: { task: Task; priority?: boolea
   };
 
   if (editing) {
+    const tagListId = `task-tags-${priority ? "priority" : "brain"}-${task.id}`;
     return (
       <div className="note-task-editor">
         <input value={title} onChange={(event) => setTitle(event.target.value)} aria-label="할 일 제목" autoFocus />
         <div>
-          <select value={tag} onChange={(event) => setTag(event.target.value as TagName)} aria-label="태그">
-            {TAG_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-          </select>
+          <label className="note-tag-field">
+            <Tag size={12} />
+            <input value={tag} onChange={(event) => setTag(event.target.value)} list={tagListId} maxLength={30} aria-label="태그" placeholder="태그 입력" />
+          </label>
+          <datalist id={tagListId}>{tagOptions.map((option) => <option key={option} value={option} />)}</datalist>
           <select value={estimate} onChange={(event) => setEstimate(Number(event.target.value))} aria-label="예상 시간" disabled={scheduled} title={scheduled ? "배치된 일정 블록의 끝을 끌어 시간을 바꿔 주세요." : undefined}>
             {ESTIMATE_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes}분</option>)}
           </select>
@@ -172,7 +175,7 @@ function CompactTask({ task, priority = false }: { task: Task; priority?: boolea
   );
 }
 
-function AddTaskForm() {
+function AddTaskForm({ tagOptions }: { tagOptions: string[] }) {
   const addTask = usePlannerStore((state) => state.addTask);
   const [title, setTitle] = useState("");
   const [tag, setTag] = useState<TagName>("미분류");
@@ -193,7 +196,11 @@ function AddTaskForm() {
         <button type="submit">추가</button>
       </div>
       <div className="brain-add-options">
-        <label><Tag size={13} /><select value={tag} onChange={(event) => setTag(event.target.value as TagName)}>{TAG_OPTIONS.map((option) => <option key={option}>{option}</option>)}</select></label>
+        <label>
+          <Tag size={13} />
+          <input className="brain-tag-input" value={tag} onChange={(event) => setTag(event.target.value)} list="brain-tag-options" maxLength={30} aria-label="태그" placeholder="태그 입력" />
+          <datalist id="brain-tag-options">{tagOptions.map((option) => <option key={option} value={option} />)}</datalist>
+        </label>
         <label><Clock3 size={13} /><select value={estimate} onChange={(event) => setEstimate(Number(event.target.value))}>{ESTIMATE_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes}분 예상</option>)}</select></label>
       </div>
     </form>
@@ -203,12 +210,13 @@ function AddTaskForm() {
 function PrioritySection() {
   const tasks = usePlannerStore((state) => state.tasks);
   const priorities = tasks.filter((task) => task.isMit && !task.completed).slice(0, 3);
+  const tagOptions = tagSuggestions(tasks.map((task) => task.tag));
   return (
     <section className="paper-section priority-note">
       <div className="paper-section-title"><span>TOP PRIORITIES</span><small>이날 가장 중요한 3가지</small></div>
       <div className="priority-list">
         {[0, 1, 2].map((index) => priorities[index]
-          ? <div className="priority-line" key={priorities[index].id}><b>{index + 1}</b><CompactTask task={priorities[index]} priority /></div>
+          ? <div className="priority-line" key={priorities[index].id}><b>{index + 1}</b><CompactTask task={priorities[index]} tagOptions={tagOptions} priority /></div>
           : <div className="priority-empty" key={index}><b>{index + 1}</b><span>브레인덤프에서 별을 눌러 선택하세요</span></div>)}
       </div>
     </section>
@@ -218,12 +226,13 @@ function PrioritySection() {
 function BrainDumpSection() {
   const tasks = usePlannerStore((state) => state.tasks);
   const active = tasks.filter((task) => !task.completed);
+  const tagOptions = tagSuggestions(tasks.map((task) => task.tag));
   return (
     <section className="paper-section brain-note">
       <div className="paper-section-title"><span>BRAIN DUMP</span><small>모든 생각 쏟아내기 · {active.length}</small></div>
-      <AddTaskForm />
+      <AddTaskForm tagOptions={tagOptions} />
       <div className="brain-list">
-        {active.length ? active.map((task) => <CompactTask key={task.id} task={task} />) : (
+        {active.length ? active.map((task) => <CompactTask key={task.id} task={task} tagOptions={tagOptions} />) : (
           <div className="brain-empty"><Inbox size={22} /><p>완료하지 않은 일은 내일도 이곳에 남아요.</p></div>
         )}
       </div>

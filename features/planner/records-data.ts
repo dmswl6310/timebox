@@ -37,6 +37,98 @@ export type RecordBundle = {
 };
 
 const EMPTY_BUNDLE: RecordBundle = { activities: [], days: [], tagMinutes: [] };
+const PAGE_SIZE = 500;
+const ID_BATCH_SIZE = 100;
+
+type QueryError = { message: string } | null;
+type QueryPage<T> = { data: T[] | null; error: QueryError };
+
+type PlanRow = {
+  id: string;
+  plan_date: string;
+  status: string;
+  timezone: string;
+  committed_at: string | null;
+};
+
+type BlockRow = {
+  id: string;
+  daily_plan_id: string;
+  task_id: string | null;
+  title: string;
+  planned_start: string;
+  planned_end: string;
+  status: string;
+};
+
+type ReflectionRow = {
+  daily_plan_id: string;
+  content: string;
+  mood: number | null;
+  updated_at: string;
+};
+
+type TaskRow = {
+  id: string;
+  title: string;
+  estimate_minutes: number | null;
+  created_at: string;
+  completed_at: string | null;
+};
+
+type ChangeRow = {
+  id: string;
+  daily_plan_id: string;
+  time_block_id: string | null;
+  change_type: string;
+  before_state: unknown;
+  after_state: unknown;
+  reason: string | null;
+  created_at: string;
+};
+
+type SessionRow = {
+  time_block_id: string;
+  started_at: string;
+  ended_at: string | null;
+};
+
+type TaskTagRow = { task_id: string; tags: { name: string } | null };
+
+function queryPage<T>(result: { data: unknown; error: QueryError }): QueryPage<T> {
+  return { data: Array.isArray(result.data) ? result.data as T[] : null, error: result.error };
+}
+
+async function fetchAllPages<T>(loadPage: (from: number, to: number) => Promise<QueryPage<T>>) {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const result = await loadPage(from, from + PAGE_SIZE - 1);
+    if (result.error) throw new Error(result.error.message);
+    const page = result.data ?? [];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  return rows;
+}
+
+function batches<T>(items: T[]) {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += ID_BATCH_SIZE) {
+    result.push(items.slice(index, index + ID_BATCH_SIZE));
+  }
+  return result;
+}
+
+async function fetchAllBatches<T>(
+  ids: string[],
+  loadPage: (ids: string[], from: number, to: number) => Promise<QueryPage<T>>,
+) {
+  const rows: T[] = [];
+  for (const idBatch of batches(ids)) {
+    rows.push(...await fetchAllPages((from, to) => loadPage(idBatch, from, to)));
+  }
+  return rows;
+}
 
 function minutesBetween(start: string, end: string | null) {
   if (!end) return 0;
@@ -62,93 +154,95 @@ function timeInZoneLabel(iso: string, timezone: string) {
 
 export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
   const supabase = createClient();
-  const { data: plans, error: planError } = await supabase
-    .from("daily_plans")
-    .select("id,plan_date,status,timezone,committed_at,created_at")
-    .eq("user_id", userId)
-    .order("plan_date", { ascending: false })
-    .limit(1000);
-  if (planError) throw new Error(planError.message);
-  if (!plans?.length) return EMPTY_BUNDLE;
+  const plans = await fetchAllPages<PlanRow>(async (from, to) => queryPage<PlanRow>(
+    await supabase
+      .from("daily_plans")
+      .select("id,plan_date,status,timezone,committed_at")
+      .eq("user_id", userId)
+      .order("plan_date", { ascending: false })
+      .range(from, to),
+  ));
+  if (!plans.length) return EMPTY_BUNDLE;
 
   const planIds = plans.map((plan) => plan.id);
   const closedPlanIds = plans.filter((plan) => plan.status === "closed").map((plan) => plan.id);
-  const [blocksResult, reflectionsResult, tasksResult, changesResult] = await Promise.all([
-    supabase
+  const loadChanges = async () => {
+    if (!closedPlanIds.length) return [] as ChangeRow[];
+    try {
+      return await fetchAllBatches<ChangeRow>(closedPlanIds, async (ids, from, to) => queryPage<ChangeRow>(await supabase
+        .from("schedule_change_events")
+        .select("id,daily_plan_id,time_block_id,change_type,before_state,after_state,reason,created_at")
+        .eq("user_id", userId)
+        .in("daily_plan_id", ids)
+        .order("created_at", { ascending: false })
+        .range(from, to)));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!message.includes("schedule_change_events.reason") && !message.includes("reason does not exist")) throw error;
+      const legacyRows = await fetchAllBatches<Omit<ChangeRow, "reason">>(closedPlanIds, async (ids, from, to) => queryPage<Omit<ChangeRow, "reason">>(await supabase
+        .from("schedule_change_events")
+        .select("id,daily_plan_id,time_block_id,change_type,before_state,after_state,created_at")
+        .eq("user_id", userId)
+        .in("daily_plan_id", ids)
+        .order("created_at", { ascending: false })
+        .range(from, to)));
+      return legacyRows.map((row) => ({ ...row, reason: null }));
+    }
+  };
+  const [blocks, reflections, tasks, changes] = await Promise.all([
+    fetchAllBatches<BlockRow>(planIds, async (ids, from, to) => queryPage<BlockRow>(await supabase
       .from("time_blocks")
-      .select("id,daily_plan_id,task_id,title,planned_start,planned_end,baseline_start,baseline_end,status,created_at,updated_at")
+      .select("id,daily_plan_id,task_id,title,planned_start,planned_end,status")
       .eq("user_id", userId)
-      .in("daily_plan_id", planIds)
+      .in("daily_plan_id", ids)
       .neq("status", "cancelled")
-      .limit(2000),
-    supabase
+      .range(from, to))),
+    fetchAllBatches<ReflectionRow>(planIds, async (ids, from, to) => queryPage<ReflectionRow>(await supabase
       .from("daily_reflections")
-      .select("daily_plan_id,content,mood,created_at,updated_at")
+      .select("daily_plan_id,content,mood,updated_at")
       .eq("user_id", userId)
-      .in("daily_plan_id", planIds)
-      .limit(500),
-    supabase
+      .in("daily_plan_id", ids)
+      .range(from, to))),
+    fetchAllPages<TaskRow>(async (from, to) => queryPage<TaskRow>(await supabase
       .from("tasks")
-      .select("id,title,status,estimate_minutes,created_at,completed_at")
+      .select("id,title,estimate_minutes,created_at,completed_at")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
-      .limit(2000),
-    closedPlanIds.length
-      ? supabase
-          .from("schedule_change_events")
-          .select("id,daily_plan_id,time_block_id,change_type,before_state,after_state,reason,created_at")
-          .eq("user_id", userId)
-          .in("daily_plan_id", closedPlanIds)
-          .order("created_at", { ascending: false })
-          .limit(2000)
-      : Promise.resolve({ data: [], error: null }),
+      .range(from, to))),
+    loadChanges(),
   ]);
-
-  if (blocksResult.error) throw new Error(blocksResult.error.message);
-  if (reflectionsResult.error) throw new Error(reflectionsResult.error.message);
-  if (tasksResult.error) throw new Error(tasksResult.error.message);
-
-  const blocks = blocksResult.data ?? [];
-  const reflections = reflectionsResult.data ?? [];
-  const tasks = tasksResult.data ?? [];
-  const changes = changesResult.error ? [] : (changesResult.data ?? []);
   const blockIds = blocks.map((block) => block.id);
   const taskIds = tasks.map((task) => task.id);
 
-  const [sessionsResult, taskTagsResult] = await Promise.all([
+  const [sessions, taskTags] = await Promise.all([
     blockIds.length
-      ? supabase
+      ? fetchAllBatches<SessionRow>(blockIds, async (ids, from, to) => queryPage<SessionRow>(await supabase
           .from("work_sessions")
-          .select("id,time_block_id,started_at,ended_at,created_at")
+          .select("time_block_id,started_at,ended_at")
           .eq("user_id", userId)
-          .in("time_block_id", blockIds)
-          .limit(3000)
-      : Promise.resolve({ data: [], error: null }),
+          .in("time_block_id", ids)
+          .range(from, to)))
+      : Promise.resolve([] as SessionRow[]),
     taskIds.length
-      ? supabase
+      ? fetchAllBatches<TaskTagRow>(taskIds, async (ids, from, to) => queryPage<TaskTagRow>(await supabase
           .from("task_tags")
           .select("task_id,tags(name)")
           .eq("user_id", userId)
-          .in("task_id", taskIds)
-          .limit(3000)
-      : Promise.resolve({ data: [], error: null }),
+          .in("task_id", ids)
+          .range(from, to)))
+      : Promise.resolve([] as TaskTagRow[]),
   ]);
-  if (sessionsResult.error) throw new Error(sessionsResult.error.message);
-  if (taskTagsResult.error) throw new Error(taskTagsResult.error.message);
 
   const planDateById = new Map(plans.map((plan) => [plan.id, plan.plan_date]));
   const planTimezoneById = new Map(plans.map((plan) => [plan.id, plan.timezone]));
   const blockById = new Map(blocks.map((block) => [block.id, block]));
   const taskTag = new Map<string, string>();
-  for (const row of (taskTagsResult.data ?? []) as unknown as Array<{
-    task_id: string;
-    tags: { name: string } | null;
-  }>) {
+  for (const row of taskTags) {
     if (row.tags && !taskTag.has(row.task_id)) taskTag.set(row.task_id, row.tags.name);
   }
 
   const sessionsByBlock = new Map<string, number>();
-  for (const session of sessionsResult.data ?? []) {
+  for (const session of sessions) {
     sessionsByBlock.set(
       session.time_block_id,
       (sessionsByBlock.get(session.time_block_id) ?? 0) + minutesBetween(session.started_at, session.ended_at),

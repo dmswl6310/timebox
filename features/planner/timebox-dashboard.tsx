@@ -22,6 +22,7 @@ import {
   History,
   Inbox,
   LoaderCircle,
+  Link2,
   Minus,
   NotebookPen,
   PanelLeftClose,
@@ -53,6 +54,14 @@ type Page = "today" | "journal" | "records";
 type ServiceMode = "professional" | "paper";
 type RecordTab = "summary" | "activity";
 type Period = "today" | "week" | "month" | "year" | "all";
+type ShareLinkSummary = {
+  id: string;
+  dailyPlanId: string;
+  planDate: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+};
 
 const MODE_STORAGE_KEY = "timebox-service-mode";
 const MODE_CHANGE_EVENT = "timebox-service-mode-change";
@@ -558,6 +567,61 @@ function MonthHistory({
   );
 }
 
+function ShareManager({
+  open,
+  loading,
+  creating,
+  revokingId,
+  now,
+  demo,
+  error,
+  shares,
+  onClose,
+  onCreate,
+  onRevoke,
+}: {
+  open: boolean;
+  loading: boolean;
+  creating: boolean;
+  revokingId: string | null;
+  now: number;
+  demo: boolean;
+  error: string;
+  shares: ShareLinkSummary[];
+  onClose: () => void;
+  onCreate: () => void;
+  onRevoke: (shareId: string) => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="share-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="share-manager" role="dialog" aria-modal="true" aria-labelledby="share-manager-title">
+        <header>
+          <div><Link2 size={18} /><div><h2 id="share-manager-title">일정 공유 관리</h2><p>30일 동안 열 수 있는 읽기 전용 링크예요.</p></div></div>
+          <button onClick={onClose} aria-label="공유 관리 닫기"><X size={17} /></button>
+        </header>
+        <button className="share-create" onClick={onCreate} disabled={creating || demo}>{creating ? <LoaderCircle className="spin" size={15} /> : <Copy size={15} />}{demo ? "로그인 후 링크 만들기" : creating ? "링크 만드는 중" : "현재 일정 새 링크 만들기"}</button>
+        {error && <p className="share-error">{error}</p>}
+        <div className="share-list">
+          {loading ? <p className="share-empty">공유 링크를 불러오고 있어요…</p> : shares.length ? shares.map((share) => {
+            const expired = Boolean(share.expiresAt && new Date(share.expiresAt).getTime() <= now);
+            const active = !share.revokedAt && !expired;
+            return (
+              <article key={share.id} data-active={active}>
+                <div className="share-date"><CalendarDays size={14} /><strong>{share.planDate ? dateLabel(share.planDate) : "일정"}</strong><span>{active ? "공유 중" : share.revokedAt ? "취소됨" : "만료됨"}</span></div>
+                <p>생성 {new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(share.createdAt))}</p>
+                {share.expiresAt && <p>만료 {new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(share.expiresAt))}</p>}
+                {active && !demo && <button className="share-revoke" onClick={() => onRevoke(share.id)} disabled={revokingId === share.id}>{revokingId === share.id ? <LoaderCircle className="spin" size={13} /> : <Trash2 size={13} />}공유 취소</button>}
+              </article>
+            );
+          }) : <p className="share-empty">아직 만든 공유 링크가 없어요.</p>}
+        </div>
+        <footer>{demo ? "데모 미리보기예요. 로그인하면 실제 공유 링크를 만들고 여기서 취소할 수 있어요." : "보안을 위해 예전에 만든 링크 주소는 다시 표시하지 않아요. 다시 공유하려면 새 링크를 만들어 주세요."}</footer>
+      </section>
+    </div>
+  );
+}
+
 function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journal: string, mood: number): RecordBundle {
   const tagMinutes = new Map<string, { plannedMinutes: number; actualMinutes: number }>();
   for (const block of blocks) {
@@ -739,6 +803,12 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   const serviceMode = useSyncExternalStore(subscribeServiceMode, getServiceModeSnapshot, () => "paper");
   const [recordsIntent, setRecordsIntent] = useState<"all" | "journal">("all");
   const [sharing, setSharing] = useState(false);
+  const [sharePanelOpen, setSharePanelOpen] = useState(false);
+  const [shareLinks, setShareLinks] = useState<ShareLinkSummary[]>([]);
+  const [shareLinksLoading, setShareLinksLoading] = useState(false);
+  const [shareError, setShareError] = useState("");
+  const [revokingShareId, setRevokingShareId] = useState<string | null>(null);
+  const [shareManagerNow, setShareManagerNow] = useState(0);
   const openPage = (nextPage: Page) => {
     if (nextPage === "records") setRecordsIntent("all");
     setPage(nextPage);
@@ -775,19 +845,61 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
     return () => window.clearTimeout(timeout);
   }, [notice, setNotice]);
 
-  const shareSchedule = async () => {
-    if (!userId || !dailyPlanId) {
-      setNotice("공유 링크는 로그인 후 만들 수 있어요.");
+  const openShareManager = async () => {
+    const openedAt = Date.now();
+    setShareManagerNow(openedAt);
+    if (!userId) {
+      setShareLinks([{
+        id: "demo-share",
+        dailyPlanId: "demo-plan",
+        planDate,
+        expiresAt: new Date(openedAt + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        revokedAt: null,
+        createdAt: new Date(openedAt).toISOString(),
+      }]);
+      setShareError("");
+      setSharePanelOpen(true);
       return;
     }
+    if (!dailyPlanId) {
+      setNotice("공유할 일정이 아직 없어요.");
+      return;
+    }
+    setSharePanelOpen(true);
+    setShareLinksLoading(true);
+    setShareError("");
+    try {
+      const response = await fetch("/api/shares", { cache: "no-store" });
+      const result = await response.json() as { shares?: ShareLinkSummary[]; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "공유 링크를 불러오지 못했어요.");
+      setShareLinks(result.shares ?? []);
+    } catch (error) {
+      setShareError(error instanceof Error ? error.message : "공유 링크를 불러오지 못했어요.");
+    } finally {
+      setShareLinksLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!sharePanelOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSharePanelOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [sharePanelOpen]);
+
+  const shareSchedule = async () => {
+    if (!dailyPlanId) return;
     setSharing(true);
+    setShareError("");
     try {
       const response = await fetch("/api/shares", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ dailyPlanId }),
       });
-      const result = await response.json() as { path?: string; error?: string };
+      const result = await response.json() as { path?: string; id?: string; planDate?: string; expiresAt?: string; createdAt?: string; error?: string };
       if (!response.ok || !result.path) throw new Error(result.error ?? "공유 링크를 만들지 못했어요.");
       const shareUrl = new URL(result.path, window.location.origin).toString();
       if (navigator.clipboard) {
@@ -797,12 +909,40 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
       } else {
         throw new Error("브라우저에서 링크 복사를 지원하지 않아요.");
       }
+      if (result.id && result.createdAt) {
+        setShareLinks((shares) => [{
+          id: result.id as string,
+          dailyPlanId,
+          planDate: result.planDate ?? planDate,
+          expiresAt: result.expiresAt ?? null,
+          revokedAt: null,
+          createdAt: result.createdAt as string,
+        }, ...shares]);
+      }
       setNotice("공유 링크를 복사했어요.");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      setNotice(error instanceof Error ? error.message : "공유 링크를 만들지 못했어요.");
+      const message = error instanceof Error ? error.message : "공유 링크를 만들지 못했어요.";
+      setShareError(message);
+      setNotice(message);
     } finally {
       setSharing(false);
+    }
+  };
+
+  const revokeShare = async (shareId: string) => {
+    setRevokingShareId(shareId);
+    setShareError("");
+    try {
+      const response = await fetch(`/api/shares/${shareId}`, { method: "DELETE" });
+      const result = await response.json() as { revokedAt?: string; error?: string };
+      if (!response.ok || !result.revokedAt) throw new Error(result.error ?? "공유를 취소하지 못했어요.");
+      setShareLinks((shares) => shares.map((share) => share.id === shareId ? { ...share, revokedAt: result.revokedAt as string } : share));
+      setNotice("공유 링크를 취소했어요.");
+    } catch (error) {
+      setShareError(error instanceof Error ? error.message : "공유를 취소하지 못했어요.");
+    } finally {
+      setRevokingShareId(null);
     }
   };
 
@@ -824,13 +964,14 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
               <button data-active={serviceMode === "professional"} onClick={() => changeServiceMode("professional")} title="분리된 카드형 일잘러 모드"><BriefcaseBusiness size={14} /><span>일잘러</span></button>
               <button data-active={serviceMode === "paper"} onClick={() => changeServiceMode("paper")} title="손글씨 종이 플래너 모드"><NotebookPen size={14} /><span>종이</span></button>
             </div>
-            <button onClick={shareSchedule} disabled={sharing}>{sharing ? <LoaderCircle className="spin" size={15} /> : <Copy size={15} />}<span>{sharing ? "생성 중" : "공유"}</span></button><button className="paper-avatar" onClick={signOut} title="로그아웃">J</button>
+            <button onClick={openShareManager}><Copy size={15} /><span>공유</span></button><button className="paper-avatar" onClick={signOut} title="로그아웃">J</button>
           </div>
         </header>
         {page === "today" && <TodayView todayLabel={todayLabel} />}
         {page === "journal" && <JournalView onOpenRecords={() => { setRecordsIntent("journal"); setPage("records"); }} />}
         {page === "records" && <RecordsView initialJournalSearch={recordsIntent === "journal"} onOpenRecord={openRecord} />}
         <AppNav page={page} setPage={openPage} />
+        <ShareManager open={sharePanelOpen} loading={shareLinksLoading} creating={sharing} revokingId={revokingShareId} now={shareManagerNow} demo={!userId} error={shareError} shares={shareLinks} onClose={() => setSharePanelOpen(false)} onCreate={shareSchedule} onRevoke={revokeShare} />
         {notice && <div className="toast" role="status"><CheckCircle2 size={17} /> {notice}<button onClick={() => setNotice(null)} aria-label="알림 닫기"><X size={15} /></button></div>}
         <DragOverlay className="drag-overlay" dropAnimation={null}>{(source) => <div className="drag-preview"><GripVertical size={15} /><span>{String(source.data.title ?? "타임블록")}</span></div>}</DragOverlay>
       </div>

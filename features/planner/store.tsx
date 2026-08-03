@@ -81,7 +81,7 @@ export type PlannerState = PlannerSeed & {
   addTag: (name: string) => void;
   setDayStartHour: (hour: number) => void;
   addTask: (title: string, tag: TagName, estimate: number) => void;
-  updateTask: (taskId: string, patch: Pick<Task, "title" | "tag" | "estimate">) => void;
+  updateTask: (taskId: string, patch: Pick<Task, "title" | "tag" | "estimate">, reason?: string) => boolean;
   toggleMit: (taskId: string) => void;
   scheduleTask: (taskId: string, start?: number, reason?: string) => void;
   moveBlock: (blockId: string, start: number, reason?: string) => void;
@@ -198,31 +198,63 @@ export function createPlannerStore(seed: PlannerSeed) {
         if (ctx) save(() => persistTaskCreate(ctx, task));
       },
 
-      updateTask: (taskId, patch) => {
+      updateTask: (taskId, patch, reason) => {
         const state = get();
         const target = state.tasks.find((task) => task.id === taskId);
         const cleanTitle = patch.title.trim();
-        if (!target || !cleanTitle) return;
+        if (!target || !cleanTitle) return false;
+        const linkedBlock = state.blocks.find((block) => block.taskId === taskId);
+        const estimateChanged = patch.estimate !== target.estimate;
+        if (linkedBlock && estimateChanged && state.planStatus === "closed") {
+          set({ notice: "일과를 완료한 일정의 예상 시간은 바꿀 수 없어요." });
+          return false;
+        }
+        if (linkedBlock && estimateChanged && state.planStatus === "committed" && !reason?.trim()) {
+          set({ notice: "확정 후 예상 시간을 바꾸려면 변경 이유가 필요해요." });
+          return false;
+        }
+        const safeEstimate = Math.max(15, Math.min(Math.round(patch.estimate / 15) * 15, linkedBlock ? 24 * 60 - linkedBlock.start : 480));
+        if (linkedBlock && estimateChanged && overlaps(state.blocks, linkedBlock.start, safeEstimate, linkedBlock.id)) {
+          set({ notice: "다음 일정과 겹쳐서 예상 시간을 바꿀 수 없어요." });
+          return false;
+        }
         const cleanTag = normalizeTagName(patch.tag);
         const nextTask: Task = {
           ...target,
           title: cleanTitle,
           tag: cleanTag,
-          estimate: patch.estimate,
+          estimate: safeEstimate,
           color: colorForTag(cleanTag),
         };
+        const changeReasons = linkedBlock && estimateChanged && state.planStatus === "committed"
+          ? { ...linkedBlock.changeReasons, resized: reason?.trim() }
+          : linkedBlock?.changeReasons;
         set({
           tasks: state.tasks.map((task) => task.id === taskId ? nextTask : task),
           availableTags: tagSuggestions([...state.availableTags, cleanTag]),
           blocks: state.planStatus === "closed"
             ? state.blocks
             : state.blocks.map((block) => block.taskId === taskId
-              ? { ...block, title: nextTask.title, color: nextTask.color }
+              ? {
+                ...block,
+                title: nextTask.title,
+                color: nextTask.color,
+                duration: estimateChanged ? safeEstimate : block.duration,
+                changeReasons: block.id === linkedBlock?.id ? changeReasons : block.changeReasons,
+              }
               : block),
-          notice: "할 일 정보를 바꿨어요.",
+          notice: linkedBlock && estimateChanged
+            ? "예상 시간과 연결된 타임블록 크기를 함께 바꿨어요."
+            : "할 일 정보를 바꿨어요.",
         });
         const ctx = context();
-        if (ctx) save(() => persistTaskUpdate(ctx, nextTask, state.planStatus !== "closed"));
+        if (ctx) {
+          save(() => persistTaskUpdate(ctx, nextTask, state.planStatus !== "closed"));
+          if (linkedBlock && estimateChanged) {
+            save(() => persistBlockMove(ctx, linkedBlock.id, linkedBlock.start, safeEstimate, changeReasons));
+          }
+        }
+        return true;
       },
 
       toggleMit: (taskId) => {

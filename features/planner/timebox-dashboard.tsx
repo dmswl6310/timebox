@@ -188,9 +188,20 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
     disabled: scheduled || planStatus === "closed",
   });
 
-  const save = () => {
-    updateTask(task.id, { title, tag, estimate });
-    setEditing(false);
+  const save = async () => {
+    const linkedBlock = blocks.find((block) => block.taskId === task.id);
+    const estimateChanged = estimate !== task.estimate;
+    const reason = linkedBlock && estimateChanged
+      ? await reasonForChange(
+        planStatus,
+        requestChangeReason,
+        "예상 시간을 바꾸는 이유",
+        `‘${task.title}’ 작업을 ${formatDuration(task.estimate)}에서 ${formatDuration(estimate)}으로 바꾸는 이유를 남겨 주세요. 연결된 타임블록 크기도 함께 바뀌어요.`,
+      )
+      : undefined;
+    if (reason === null) return;
+    const updated = updateTask(task.id, { title, tag, estimate }, reason);
+    if (updated) setEditing(false);
   };
 
   const addToSchedule = async () => {
@@ -230,7 +241,7 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
             <input value={tag} onChange={(event) => setTag(event.target.value)} list={tagListId} maxLength={30} aria-label="태그" placeholder="태그 입력" />
           </label>
           <datalist id={tagListId}>{tagOptions.map((option) => <option key={option} value={option} />)}</datalist>
-          <select value={estimate} onChange={(event) => setEstimate(Number(event.target.value))} aria-label="예상 시간" disabled={scheduled} title={scheduled ? "배치된 일정 블록의 끝을 끌어 시간을 바꿔 주세요." : undefined}>
+          <select value={estimate} onChange={(event) => setEstimate(Number(event.target.value))} aria-label="예상 시간" title={scheduled ? "연결된 타임블록 크기도 함께 바뀝니다." : undefined}>
             {ESTIMATE_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes}분</option>)}
           </select>
           <button onClick={save}><Check size={15} /> 저장</button>

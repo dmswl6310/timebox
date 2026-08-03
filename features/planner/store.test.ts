@@ -120,6 +120,73 @@ describe("일정 배치", () => {
 });
 
 describe("일정 크기와 예상 시간 동기화", () => {
+  it("브레인덤프에서 예상 시간을 바꾸면 연결된 블록 크기도 함께 바꾼다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+    }));
+
+    const updated = store.getState().updateTask("task-1", {
+      title: "작업 task-1",
+      tag: "업무",
+      estimate: 60,
+    });
+
+    expect(updated).toBe(true);
+    expect(store.getState().tasks[0]?.estimate).toBe(60);
+    expect(store.getState().blocks[0]?.duration).toBe(60);
+  });
+
+  it("확정 후 이유 없이 브레인덤프 예상 시간을 바꾸지 않는다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+      planStatus: "committed",
+    }));
+
+    const updated = store.getState().updateTask("task-1", {
+      title: "작업 task-1",
+      tag: "업무",
+      estimate: 60,
+    });
+
+    expect(updated).toBe(false);
+    expect(store.getState().tasks[0]?.estimate).toBe(30);
+    expect(store.getState().blocks[0]?.duration).toBe(30);
+  });
+
+  it("확정 후 이유와 함께 바꾼 예상 시간을 블록 변경 이유에 보존한다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+      planStatus: "committed",
+    }));
+
+    const updated = store.getState().updateTask("task-1", {
+      title: "작업 task-1",
+      tag: "업무",
+      estimate: 60,
+    }, "집중 검토 시간이 더 필요함");
+
+    expect(updated).toBe(true);
+    expect(store.getState().blocks[0]?.duration).toBe(60);
+    expect(store.getState().blocks[0]?.changeReasons?.resized).toBe("집중 검토 시간이 더 필요함");
+  });
+
+  it("늘린 예상 시간이 다음 일정과 겹치면 작업과 블록을 모두 원래대로 둔다", () => {
+    const store = createPlannerStore(seed({
+      tasks: [task("task-1"), task("task-2")],
+      blocks: [block("block-1", "task-1", 9 * 60), block("block-2", "task-2", 10 * 60)],
+    }));
+
+    const updated = store.getState().updateTask("task-1", {
+      title: "작업 task-1",
+      tag: "업무",
+      estimate: 90,
+    });
+
+    expect(updated).toBe(false);
+    expect(store.getState().tasks.find((item) => item.id === "task-1")?.estimate).toBe(30);
+    expect(store.getState().blocks.find((item) => item.id === "block-1")?.duration).toBe(30);
+  });
+
   it("15분 단위로 크기를 맞추고 작업 예상 시간도 함께 바꾼다", () => {
     const store = createPlannerStore(seed({
       blocks: [block("block-1", "task-1", 9 * 60)],

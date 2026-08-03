@@ -3458,6 +3458,25 @@ button.month-day:hover { border-color: #aebcaf; background: #f1f5ef; }
 .share-empty { padding: 34px 8px; color: #8c928d; font-size: 10px; text-align: center; }
 .share-manager > footer { padding: 12px 20px 16px; border-top: 1px solid #e5e8e3; color: #8a908b; font-size: 8px; line-height: 1.5; }
 
+.reason-backdrop { position: fixed; z-index: 120; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(25, 31, 27, .52); backdrop-filter: blur(3px); }
+.reason-dialog { width: min(500px, 100%); overflow: hidden; border: 1px solid #d9ded8; border-radius: 16px; background: #fbfcf9; box-shadow: 0 24px 70px rgba(21, 31, 25, .3); }
+.reason-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; padding: 20px; border-bottom: 1px solid #e2e6e1; }
+.reason-dialog > header > div { display: flex; align-items: flex-start; gap: 10px; }
+.reason-dialog h2 { margin: 0; color: #273e33; font-size: 16px; }
+.reason-dialog header p { max-width: 380px; margin: 5px 0 0; color: #737c76; font-size: 9px; line-height: 1.55; }
+.reason-dialog > header > button { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: #737b75; }
+.reason-dialog > header > button:hover { background: #edf1ec; }
+.reason-dialog form { padding: 18px 20px 20px; }
+.reason-dialog label { display: block; margin-bottom: 7px; color: #354c40; font-size: 9px; font-weight: 850; }
+.reason-dialog textarea { display: block; width: 100%; min-height: 116px; resize: vertical; padding: 12px; border: 1px solid #cfd7d1; border-radius: 9px; background: #fff; color: #27342d; font-size: 11px; line-height: 1.55; }
+.reason-dialog textarea:focus { border-color: #648875; box-shadow: 0 0 0 3px rgba(79, 122, 98, .12); }
+.reason-dialog form > small { display: block; margin-top: 7px; color: #858c87; font-size: 8px; }
+.reason-dialog form > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 17px; }
+.reason-dialog form button { min-height: 38px; padding: 0 14px; border-radius: 8px; font-size: 9px; font-weight: 850; }
+.reason-cancel { border: 1px solid #d9ded9; color: #66716a; }
+.reason-submit { background: #294a3a; color: #fff; }
+.reason-submit:disabled { cursor: not-allowed; opacity: .45; }
+
 @media (max-width: 1060px) {
   .paper-planner { grid-template-columns: 320px minmax(600px, 1fr); overflow-x: auto; }
   .paper-notes { min-width: 320px; }
@@ -3536,6 +3555,12 @@ button.month-day:hover { border-color: #aebcaf; background: #f1f5ef; }
   .share-create { width: calc(100% - 32px); margin-right: 16px; margin-left: 16px; }
   .share-list { padding-right: 16px; padding-left: 16px; }
   .share-list article { padding-right: 92px; }
+  .reason-backdrop { align-items: end; padding: 0; }
+  .reason-dialog { width: 100%; border-radius: 18px 18px 0 0; }
+  .reason-dialog > header { padding: 18px 16px; }
+  .reason-dialog form { padding: 16px; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+  .reason-dialog textarea { min-height: 132px; font-size: 16px; }
+  .reason-dialog form > div { display: grid; grid-template-columns: 1fr 1.35fr; }
 }
 
 /* Service mode switch */

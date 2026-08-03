@@ -25,6 +25,21 @@ function assertSuccess(error: { message: string } | null) {
   if (error) throw new Error(error.message);
 }
 
+function cleanChangeReason(reason?: string) {
+  const value = reason?.trim().slice(0, 500);
+  return value || null;
+}
+
+function cleanChangeReasons(reasons?: TimeBlock["changeReasons"]) {
+  if (!reasons) return undefined;
+  const cleaned = Object.fromEntries(
+    Object.entries(reasons)
+      .map(([kind, reason]) => [kind, cleanChangeReason(reason)] as const)
+      .filter((entry): entry is [string, string] => Boolean(entry[1])),
+  );
+  return Object.keys(cleaned).length ? cleaned : undefined;
+}
+
 async function replaceTaskTag(
   context: PersistenceContext,
   task: Task,
@@ -155,6 +170,7 @@ export async function persistPriorities(context: PersistenceContext, taskIds: st
 
 export async function persistBlockCreate(context: PersistenceContext, block: TimeBlock) {
   const supabase = createClient();
+  const changeReasons = cleanChangeReasons(block.changeReasons);
   const { error } = await supabase.from("time_blocks").insert({
     id: block.id,
     user_id: context.userId,
@@ -165,6 +181,7 @@ export async function persistBlockCreate(context: PersistenceContext, block: Tim
     planned_start: toIso(context.planDate, block.start),
     planned_end: toIso(context.planDate, block.start + block.duration),
     status: dbStatus(block.status),
+    ...(changeReasons ? { change_reasons: changeReasons } : {}),
   });
   assertSuccess(error);
 }
@@ -174,24 +191,28 @@ export async function persistBlockMove(
   blockId: string,
   start: number,
   duration: number,
+  changeReasons?: TimeBlock["changeReasons"],
 ) {
   const supabase = createClient();
+  const cleanedReasons = cleanChangeReasons(changeReasons);
   const { error } = await supabase
     .from("time_blocks")
     .update({
       planned_start: toIso(context.planDate, start),
       planned_end: toIso(context.planDate, start + duration),
+      ...(cleanedReasons ? { change_reasons: cleanedReasons } : {}),
     })
     .eq("id", blockId)
     .eq("user_id", context.userId);
   assertSuccess(error);
 }
 
-export async function persistBlockCancel(context: PersistenceContext, blockId: string) {
+export async function persistBlockCancel(context: PersistenceContext, blockId: string, changeReasons?: TimeBlock["changeReasons"]) {
   const supabase = createClient();
+  const cleanedReasons = cleanChangeReasons(changeReasons);
   const { error } = await supabase
     .from("time_blocks")
-    .update({ status: "cancelled" })
+    .update({ status: "cancelled", ...(cleanedReasons ? { change_reasons: cleanedReasons } : {}) })
     .eq("id", blockId)
     .eq("user_id", context.userId);
   assertSuccess(error);
@@ -317,17 +338,21 @@ export async function persistPlanClose(
   const supabase = createClient();
   if (blocks.length) {
     const { error: upsertError } = await supabase.from("time_blocks").upsert(
-      blocks.map((block) => ({
-        id: block.id,
-        user_id: context.userId,
-        daily_plan_id: context.dailyPlanId,
-        task_id: block.taskId ?? null,
-        kind: block.type,
-        title: block.title,
-        planned_start: toIso(context.planDate, block.start),
-        planned_end: toIso(context.planDate, block.start + block.duration),
-        status: dbStatus(block.status),
-      })),
+      blocks.map((block) => {
+        const changeReasons = cleanChangeReasons(block.changeReasons);
+        return {
+          id: block.id,
+          user_id: context.userId,
+          daily_plan_id: context.dailyPlanId,
+          task_id: block.taskId ?? null,
+          kind: block.type,
+          title: block.title,
+          planned_start: toIso(context.planDate, block.start),
+          planned_end: toIso(context.planDate, block.start + block.duration),
+          status: dbStatus(block.status),
+          ...(changeReasons ? { change_reasons: changeReasons } : {}),
+        };
+      }),
       { onConflict: "id" },
     );
     assertSuccess(upsertError);

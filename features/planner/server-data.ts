@@ -95,7 +95,7 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
     plan = result.data;
   }
 
-  const [prioritiesResult, blocksResult, reflectionResult] =
+  const [prioritiesResult, blocksResult, reflectionResult, blockReasonsResult] =
     await Promise.all([
       supabase
         .from("daily_priorities")
@@ -116,6 +116,11 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
         .eq("user_id", userId)
         .eq("daily_plan_id", plan.id)
         .maybeSingle(),
+      supabase
+        .from("time_blocks")
+        .select("id,change_reasons")
+        .eq("user_id", userId)
+        .eq("daily_plan_id", plan.id),
     ]);
 
   for (const result of [prioritiesResult, blocksResult, reflectionResult]) {
@@ -181,6 +186,10 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
   });
 
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const changeReasonsByBlock = new Map(
+    ((blockReasonsResult.data ?? []) as Array<{ id: string; change_reasons: TimeBlock["changeReasons"] | null }>)
+      .map((row) => [row.id, row.change_reasons ?? undefined] as const),
+  );
   const actualByBlock = new Map<string, number>();
   for (const session of (sessionsResult.data ?? []) as SessionRow[]) {
     if (!session.ended_at) continue;
@@ -217,6 +226,7 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
             ),
           )
         : undefined,
+      changeReasons: changeReasonsByBlock.get(row.id),
       actualMinutes: actualByBlock.get(row.id),
       type: row.kind,
       color: blockColor(row.kind, task),

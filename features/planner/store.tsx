@@ -73,15 +73,15 @@ export type PlannerState = PlannerSeed & {
   addTask: (title: string, tag: TagName, estimate: number) => void;
   updateTask: (taskId: string, patch: Pick<Task, "title" | "tag" | "estimate">) => void;
   toggleMit: (taskId: string) => void;
-  scheduleTask: (taskId: string, start?: number) => void;
-  moveBlock: (blockId: string, start: number) => void;
+  scheduleTask: (taskId: string, start?: number, reason?: string) => void;
+  moveBlock: (blockId: string, start: number, reason?: string) => void;
   previewResizeBlock: (blockId: string, duration: number) => void;
-  resizeBlock: (blockId: string, duration: number, originalDuration?: number) => void;
-  removeBlock: (blockId: string) => void;
+  resizeBlock: (blockId: string, duration: number, originalDuration?: number, reason?: string) => void;
+  removeBlock: (blockId: string, reason?: string) => void;
   selectBlock: (blockId: string) => void;
   toggleBlockComplete: (blockId: string) => void;
   updateActualMinutes: (blockId: string, minutes: number) => void;
-  addBufferAfter: (blockId: string) => void;
+  addBufferAfter: (blockId: string, reason?: string) => void;
   discardTask: (taskId: string) => void;
   setMobileView: (view: MobileView) => void;
   setJournal: (value: string) => void;
@@ -200,10 +200,14 @@ export function createPlannerStore(seed: PlannerSeed) {
         if (ctx) save(() => persistPriorities(ctx, tasks.filter((task) => task.isMit && !task.completed).map((task) => task.id)));
       },
 
-      scheduleTask: (taskId, requestedStart) => {
+      scheduleTask: (taskId, requestedStart, reason) => {
         const state = get();
         if (state.planStatus === "closed") {
           set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          return;
+        }
+        if (state.planStatus === "committed" && !reason?.trim()) {
+          set({ notice: "확정 후 일정을 추가하려면 변경 이유가 필요해요." });
           return;
         }
         const task = state.tasks.find((item) => item.id === taskId);
@@ -222,6 +226,7 @@ export function createPlannerStore(seed: PlannerSeed) {
           id: crypto.randomUUID(), taskId: task.id, title: task.title,
           start: Math.max(5 * 60, Math.min(desiredStart, 24 * 60 - duration)),
           duration, type: "task", color: task.color, status: "scheduled",
+          changeReasons: state.planStatus === "committed" ? { created: reason?.trim() } : undefined,
         };
         set({ blocks: [...state.blocks, block], selectedBlockId: block.id, mobileView: "schedule", notice: `${task.estimate}분 작업을 일정에 배치했어요.` });
         const ctx = context();
@@ -230,10 +235,14 @@ export function createPlannerStore(seed: PlannerSeed) {
         }
       },
 
-      moveBlock: (blockId, start) => {
+      moveBlock: (blockId, start, reason) => {
         const state = get();
         if (state.planStatus === "closed") {
           set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          return;
+        }
+        if (state.planStatus === "committed" && !reason?.trim()) {
+          set({ notice: "확정 후 시간을 옮기려면 변경 이유가 필요해요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
@@ -243,10 +252,11 @@ export function createPlannerStore(seed: PlannerSeed) {
           set({ notice: "다른 일정과 겹칠 수 없어요. 빈 시간으로 옮겨 주세요." });
           return;
         }
-        set({ blocks: state.blocks.map((item) => item.id === blockId ? { ...item, start: safeStart } : item), selectedBlockId: blockId, notice: "타임블록 시간을 옮겼어요." });
+        const changeReasons = state.planStatus === "committed" ? { ...block.changeReasons, moved: reason?.trim() } : block.changeReasons;
+        set({ blocks: state.blocks.map((item) => item.id === blockId ? { ...item, start: safeStart, changeReasons } : item), selectedBlockId: blockId, notice: "타임블록 시간을 옮겼어요." });
         const ctx = context();
         if (ctx) {
-          save(() => persistBlockMove(ctx, blockId, safeStart, block.duration));
+          save(() => persistBlockMove(ctx, blockId, safeStart, block.duration, changeReasons));
         }
       },
 
@@ -267,7 +277,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         });
       },
 
-      resizeBlock: (blockId, duration, originalDuration) => {
+      resizeBlock: (blockId, duration, originalDuration, reason) => {
         const state = get();
         if (state.planStatus === "closed") {
           set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
@@ -275,6 +285,16 @@ export function createPlannerStore(seed: PlannerSeed) {
         }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
+        if (state.planStatus === "committed" && !reason?.trim()) {
+          if (originalDuration !== undefined) {
+            set((current) => ({
+              blocks: current.blocks.map((item) => item.id === blockId ? { ...item, duration: originalDuration } : item),
+              tasks: block.taskId ? current.tasks.map((task) => task.id === block.taskId ? { ...task, estimate: originalDuration } : task) : current.tasks,
+            }));
+          }
+          set({ notice: "확정 후 시간을 조정하려면 변경 이유가 필요해요." });
+          return;
+        }
         const previousDuration = originalDuration ?? block.duration;
         const snapped = Math.round(duration / 15) * 15;
         const safeDuration = Math.max(15, Math.min(snapped, 24 * 60 - block.start));
@@ -288,9 +308,10 @@ export function createPlannerStore(seed: PlannerSeed) {
           });
           return;
         }
+        const changeReasons = state.planStatus === "committed" ? { ...block.changeReasons, resized: reason?.trim() } : block.changeReasons;
         set({
           blocks: state.blocks.map((item) => item.id === blockId
-            ? { ...item, duration: safeDuration }
+            ? { ...item, duration: safeDuration, changeReasons }
             : item),
           tasks: block.taskId
             ? state.tasks.map((task) => task.id === block.taskId ? { ...task, estimate: safeDuration } : task)
@@ -300,20 +321,25 @@ export function createPlannerStore(seed: PlannerSeed) {
         });
         const ctx = context();
         if (ctx) {
-          save(() => persistBlockMove(ctx, blockId, block.start, safeDuration));
+          save(() => persistBlockMove(ctx, blockId, block.start, safeDuration, changeReasons));
           const taskId = block.taskId;
           if (taskId) save(() => persistTaskEstimate(ctx, taskId, safeDuration));
         }
       },
 
-      removeBlock: (blockId) => {
+      removeBlock: (blockId, reason) => {
         const state = get();
         if (state.planStatus === "closed") {
           set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
           return;
         }
+        if (state.planStatus === "committed" && !reason?.trim()) {
+          set({ notice: "확정 후 일정을 빼려면 변경 이유가 필요해요." });
+          return;
+        }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
+        const changeReasons = state.planStatus === "committed" ? { ...block.changeReasons, cancelled: reason?.trim() } : block.changeReasons;
         const blocks = state.blocks.filter((item) => item.id !== blockId);
         const isCommittedChange = state.planStatus === "committed";
         set({
@@ -327,7 +353,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         });
         const ctx = context();
         if (ctx) {
-          save(() => persistBlockCancel(ctx, blockId));
+          save(() => persistBlockCancel(ctx, blockId, changeReasons));
         }
       },
 
@@ -367,10 +393,14 @@ export function createPlannerStore(seed: PlannerSeed) {
         if (ctx) save(() => persistActualMinutes(ctx, block, actualMinutes));
       },
 
-      addBufferAfter: (blockId) => {
+      addBufferAfter: (blockId, reason) => {
         const state = get();
         if (state.planStatus === "closed") {
           set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
+          return;
+        }
+        if (state.planStatus === "committed" && !reason?.trim()) {
+          set({ notice: "확정 후 여유 시간을 추가하려면 변경 이유가 필요해요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
@@ -380,7 +410,7 @@ export function createPlannerStore(seed: PlannerSeed) {
           set({ notice: "바로 뒤에 15분 버퍼를 넣을 빈 시간이 없어요." });
           return;
         }
-        const buffer: TimeBlock = { id: crypto.randomUUID(), title: "버퍼 타임", start: bufferStart, duration: 15, type: "buffer", color: "green", status: "scheduled" };
+        const buffer: TimeBlock = { id: crypto.randomUUID(), title: "버퍼 타임", start: bufferStart, duration: 15, type: "buffer", color: "green", status: "scheduled", changeReasons: state.planStatus === "committed" ? { created: reason?.trim() } : undefined };
         set({ blocks: [...state.blocks, buffer], selectedBlockId: buffer.id, notice: "뒤에 15분 버퍼를 추가했어요." });
         const ctx = context();
         if (ctx) {
@@ -417,6 +447,7 @@ export function createPlannerStore(seed: PlannerSeed) {
           ...block,
           baselineStart: block.start,
           baselineDuration: block.duration,
+          changeReasons: undefined,
         }));
         set({ blocks, planStatus: "committed", notice: "선택한 날짜의 계획을 확정했어요. 완료 전까지 자유롭게 조정할 수 있어요." });
         const ctx = context();

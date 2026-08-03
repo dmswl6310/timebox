@@ -39,7 +39,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { dateInTimeZone, shiftIsoDate, startOfIsoWeek } from "@/lib/date";
-import { FormEvent, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
+import { createContext, FormEvent, useContext, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { loadRecordBundle, type ActivityKind, type RecordBundle } from "./records-data";
 import { PlannerStoreProvider, usePlannerStore, type PlannerSeed } from "./store";
@@ -63,6 +63,25 @@ type ShareLinkSummary = {
   revokedAt: string | null;
   createdAt: string;
 };
+
+type ChangeReasonRequest = (title: string, description: string) => Promise<string | null>;
+const ChangeReasonContext = createContext<ChangeReasonRequest | null>(null);
+
+function useChangeReason() {
+  const request = useContext(ChangeReasonContext);
+  if (!request) throw new Error("변경 이유 입력창이 필요합니다.");
+  return request;
+}
+
+async function reasonForChange(
+  planStatus: "draft" | "committed" | "closed",
+  request: ChangeReasonRequest,
+  title: string,
+  description: string,
+) {
+  if (planStatus !== "committed") return undefined;
+  return (await request(title, description)) ?? null;
+}
 
 const MODE_STORAGE_KEY = "timebox-service-mode";
 const MODE_CHANGE_EVENT = "timebox-service-mode-change";
@@ -149,6 +168,7 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
   const scheduleTask = usePlannerStore((state) => state.scheduleTask);
   const updateTask = usePlannerStore((state) => state.updateTask);
   const discardTask = usePlannerStore((state) => state.discardTask);
+  const requestChangeReason = useChangeReason();
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
   const [tag, setTag] = useState<TagName>(task.tag);
@@ -169,6 +189,17 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
   const save = () => {
     updateTask(task.id, { title, tag, estimate });
     setEditing(false);
+  };
+
+  const addToSchedule = async () => {
+    const reason = await reasonForChange(
+      planStatus,
+      requestChangeReason,
+      "일정을 추가하는 이유",
+      `‘${task.title}’ 작업을 확정된 일정에 추가하는 이유를 남겨 주세요.`,
+    );
+    if (reason === null) return;
+    scheduleTask(task.id, undefined, reason);
   };
 
   if (editing) {
@@ -198,7 +229,7 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
       <button className="note-star" data-active={task.isMit} onClick={() => toggleMit(task.id)} aria-label="선택한 날짜의 우선순위 전환">
         <Star size={15} fill={task.isMit ? "currentColor" : "none"} />
       </button>
-      <button className="note-task-copy" onClick={() => scheduleTask(task.id)} title={scheduled ? "이미 시간표에 배치됨" : planStatus === "closed" ? "일과 기록을 완료한 일정입니다" : "빈 시간에 배치"} disabled={scheduled || planStatus === "closed"}>
+      <button className="note-task-copy" onClick={addToSchedule} title={scheduled ? "이미 시간표에 배치됨" : planStatus === "closed" ? "일과 기록을 완료한 일정입니다" : "빈 시간에 배치"} disabled={scheduled || planStatus === "closed"}>
         <strong>{task.title}</strong>
         <span><Tag size={11} /> {task.tag} · {task.estimate}분{scheduled && <em>시간표에 배치됨</em>}</span>
       </button>
@@ -287,6 +318,7 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
   const selectedBlockId = usePlannerStore((state) => state.selectedBlockId);
   const previewResizeBlock = usePlannerStore((state) => state.previewResizeBlock);
   const resizeBlock = usePlannerStore((state) => state.resizeBlock);
+  const requestChangeReason = useChangeReason();
   const hourStart = hour * 60;
   const start = Math.max(block.start, hourStart);
   const end = Math.min(block.start + block.duration, hourStart + 60);
@@ -315,11 +347,27 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
       nextDuration = Math.max(15, Math.round((originalDuration + deltaMinutes) / 15) * 15);
       previewResizeBlock(block.id, nextDuration);
     };
-    const finish = () => {
+    const finish = async (pointerEvent: PointerEvent) => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
-      if (nextDuration !== originalDuration) resizeBlock(block.id, nextDuration, originalDuration);
+      if (pointerEvent.type === "pointercancel") {
+        previewResizeBlock(block.id, originalDuration);
+        return;
+      }
+      if (nextDuration !== originalDuration) {
+        const reason = await reasonForChange(
+          planStatus,
+          requestChangeReason,
+          "시간을 조정하는 이유",
+          `‘${block.title}’ 블록을 ${formatDuration(originalDuration)}에서 ${formatDuration(nextDuration)}으로 바꾸는 이유를 남겨 주세요.`,
+        );
+        if (reason === null) {
+          previewResizeBlock(block.id, originalDuration);
+          return;
+        }
+        resizeBlock(block.id, nextDuration, originalDuration, reason);
+      }
     };
 
     window.addEventListener("pointermove", move);
@@ -363,26 +411,47 @@ function SelectedBlockBar() {
   const addBufferAfter = usePlannerStore((state) => state.addBufferAfter);
   const toggleBlockComplete = usePlannerStore((state) => state.toggleBlockComplete);
   const removeBlock = usePlannerStore((state) => state.removeBlock);
+  const requestChangeReason = useChangeReason();
   const selected = blocks.find((block) => block.id === selectedBlockId);
   if (!selected) return null;
   const changed = selected.baselineStart !== undefined && (selected.start !== selected.baselineStart || selected.duration !== selected.baselineDuration);
+  const changeDuration = async (duration: number) => {
+    const reason = await reasonForChange(
+      planStatus,
+      requestChangeReason,
+      "시간을 조정하는 이유",
+      `‘${selected.title}’ 블록을 ${formatDuration(selected.duration)}에서 ${formatDuration(Math.max(15, duration))}으로 바꾸는 이유를 남겨 주세요.`,
+    );
+    if (reason === null) return;
+    resizeBlock(selected.id, duration, undefined, reason);
+  };
+  const addBuffer = async () => {
+    const reason = await reasonForChange(planStatus, requestChangeReason, "여유 시간을 추가하는 이유", `‘${selected.title}’ 다음에 15분 여유를 추가하는 이유를 남겨 주세요.`);
+    if (reason === null) return;
+    addBufferAfter(selected.id, reason);
+  };
+  const removeFromSchedule = async () => {
+    const reason = await reasonForChange(planStatus, requestChangeReason, "일정에서 빼는 이유", `‘${selected.title}’ 블록을 확정된 일정에서 빼는 이유를 남겨 주세요.`);
+    if (reason === null) return;
+    removeBlock(selected.id, reason);
+  };
 
   return (
     <div className="selected-block-bar">
       <div><strong>{selected.title}</strong><span>{formatTime(selected.start)}–{formatTime(selected.start + selected.duration)}</span></div>
-      {changed && <span className="change-pill">확정 후 변경됨</span>}
+      {changed && <span className="change-pill">확정 후 변경됨{selected.changeReasons && Object.keys(selected.changeReasons).length ? " · 이유 기록됨" : ""}</span>}
       {planStatus === "closed" ? (
         <span className="closed-pill"><CheckCircle2 size={13} /> 일과 기록 완료</span>
       ) : (
         <>
           <div className="resize-actions" aria-label="블록 크기 조정">
-            <button onClick={() => resizeBlock(selected.id, selected.duration - 15)} aria-label="15분 줄이기"><Minus size={14} /></button>
+            <button onClick={() => changeDuration(selected.duration - 15)} aria-label="15분 줄이기"><Minus size={14} /></button>
             <b>{formatDuration(selected.duration)}</b>
-            <button onClick={() => resizeBlock(selected.id, selected.duration + 15)} aria-label="15분 늘리기"><Plus size={14} /></button>
+            <button onClick={() => changeDuration(selected.duration + 15)} aria-label="15분 늘리기"><Plus size={14} /></button>
           </div>
           <label className="actual-time">실제 <input type="number" min="5" step="5" value={selected.actualMinutes ?? selected.duration} onChange={(event) => updateActualMinutes(selected.id, Number(event.target.value))} />분</label>
-          <button className="quiet-action" onClick={() => addBufferAfter(selected.id)}>+ 15분 여유</button>
-          <button className="remove-block-action" onClick={() => removeBlock(selected.id)}><Trash2 size={14} /> 일정에서 빼기</button>
+          <button className="quiet-action" onClick={addBuffer}>+ 15분 여유</button>
+          <button className="remove-block-action" onClick={removeFromSchedule}><Trash2 size={14} /> 일정에서 빼기</button>
           <button className="complete-action" data-completed={selected.status === "completed"} onClick={() => toggleBlockComplete(selected.id)}><Check size={15} /> {selected.status === "completed" ? "완료됨" : "완료"}</button>
         </>
       )}
@@ -567,6 +636,36 @@ function MonthHistory({
   );
 }
 
+function ChangeReasonDialog({
+  title,
+  description,
+  value,
+  onChange,
+  onCancel,
+  onSubmit,
+}: {
+  title: string;
+  description: string;
+  value: string;
+  onChange: (value: string) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="reason-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+      <section className="reason-dialog" role="dialog" aria-modal="true" aria-labelledby="change-reason-title">
+        <header><div><History size={18} /><div><h2 id="change-reason-title">{title}</h2><p>{description}</p></div></div><button onClick={onCancel} aria-label="변경 이유 입력 취소"><X size={17} /></button></header>
+        <form onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+          <label htmlFor="change-reason">변경 이유</label>
+          <textarea id="change-reason" value={value} onChange={(event) => onChange(event.target.value)} maxLength={500} autoFocus placeholder="예: 예상보다 자료 검토가 더 필요해서 시간을 늘렸어요." />
+          <small>{value.length}/500 · 이 이유는 일과 완료 후 최종 변경 내역과 함께 저장돼요.</small>
+          <div><button type="button" className="reason-cancel" onClick={onCancel}>취소</button><button type="submit" className="reason-submit" disabled={!value.trim()}>이유 저장하고 변경</button></div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function ShareManager({
   open,
   loading,
@@ -647,6 +746,14 @@ function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journ
     }],
     tagMinutes: [...tagMinutes].map(([tag, minutes]) => ({ tag, date: planDate, ...minutes })),
     activities: [
+      ...blocks.filter((block) => block.changeReasons && block.baselineStart !== undefined && (block.start !== block.baselineStart || block.duration !== block.baselineDuration)).map((block) => ({
+        id: `demo-change-${block.id}`,
+        occurredAt: `${planDate}T23:00:00+09:00`,
+        date: planDate,
+        kind: "schedule" as const,
+        title: block.title,
+        detail: `확정 후 최종 변경 · ${block.baselineStart !== block.start ? `${formatTime(block.baselineStart ?? block.start)} → ${formatTime(block.start)} · 이유: ${block.changeReasons?.moved ?? "미기록"}` : ""}${block.baselineStart !== block.start && block.baselineDuration !== block.duration ? " · " : ""}${block.baselineDuration !== block.duration ? `${block.baselineDuration ?? block.duration}분 → ${block.duration}분 · 이유: ${block.changeReasons?.resized ?? "미기록"}` : ""}`,
+      })),
       ...blocks.map((block) => ({
         id: `demo-block-${block.id}`,
         occurredAt: `${planDate}T${formatTime(block.start)}:00+09:00`,
@@ -867,6 +974,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   const userId = usePlannerStore((state) => state.userId);
   const dailyPlanId = usePlannerStore((state) => state.dailyPlanId);
   const planDate = usePlannerStore((state) => state.planDate);
+  const planStatus = usePlannerStore((state) => state.planStatus);
   const [page, setPage] = useState<Page>(initialPage);
   const serviceMode = useSyncExternalStore(subscribeServiceMode, getServiceModeSnapshot, () => "paper");
   const [recordsIntent, setRecordsIntent] = useState<"all" | "journal">("all");
@@ -877,6 +985,19 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   const [shareError, setShareError] = useState("");
   const [revokingShareId, setRevokingShareId] = useState<string | null>(null);
   const [shareManagerNow, setShareManagerNow] = useState(0);
+  const [reasonPrompt, setReasonPrompt] = useState<{ title: string; description: string; resolve: (reason: string | null) => void } | null>(null);
+  const [reasonText, setReasonText] = useState("");
+  const requestChangeReason: ChangeReasonRequest = (title, description) => new Promise((resolve) => {
+    setReasonText("");
+    setReasonPrompt({ title, description, resolve });
+  });
+  const finishReasonPrompt = (reason: string | null) => {
+    const prompt = reasonPrompt;
+    if (!prompt) return;
+    setReasonPrompt(null);
+    setReasonText("");
+    prompt.resolve(reason?.trim() || null);
+  };
   const openPage = (nextPage: Page) => {
     if (nextPage === "records") setRecordsIntent("all");
     setPage(nextPage);
@@ -894,7 +1015,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
     window.dispatchEvent(new Event(MODE_CHANGE_EVENT));
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = async (event: DragEndEvent) => {
     if (event.canceled) return;
     const source = event.operation.source;
     const targetId = String(event.operation.target?.id ?? "");
@@ -903,8 +1024,14 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
     const targetStart = targetId.startsWith("slot:") ? Number(targetId.slice(5)) : null;
     const start = pointerStart ?? targetStart;
     if (start === null || !Number.isFinite(start)) return;
-    if (source.data.kind === "task") scheduleTask(String(source.data.taskId), start);
-    if (source.data.kind === "block") moveBlock(String(source.data.blockId), start - Number(source.data.segmentOffset ?? 0));
+    if (source.data.kind === "task") {
+      const reason = await reasonForChange(planStatus, requestChangeReason, "일정을 추가하는 이유", `‘${String(source.data.title ?? "작업")}’ 작업을 확정된 일정에 추가하는 이유를 남겨 주세요.`);
+      if (reason !== null) scheduleTask(String(source.data.taskId), start, reason);
+    }
+    if (source.data.kind === "block") {
+      const reason = await reasonForChange(planStatus, requestChangeReason, "시간을 옮기는 이유", `‘${String(source.data.title ?? "타임블록")}’ 블록의 시작 시간을 바꾸는 이유를 남겨 주세요.`);
+      if (reason !== null) moveBlock(String(source.data.blockId), start - Number(source.data.segmentOffset ?? 0), reason);
+    }
   };
 
   useEffect(() => {
@@ -956,6 +1083,19 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [sharePanelOpen]);
+
+  useEffect(() => {
+    if (!reasonPrompt) return;
+    const cancelOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setReasonPrompt(null);
+        setReasonText("");
+        reasonPrompt.resolve(null);
+      }
+    };
+    window.addEventListener("keydown", cancelOnEscape);
+    return () => window.removeEventListener("keydown", cancelOnEscape);
+  }, [reasonPrompt]);
 
   const shareSchedule = async () => {
     if (!dailyPlanId) return;
@@ -1022,6 +1162,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   };
 
   return (
+    <ChangeReasonContext.Provider value={requestChangeReason}>
     <DragDropProvider onDragEnd={handleDragEnd}>
       <div className="paper-app" data-mode={serviceMode}>
         <header className="paper-topbar">
@@ -1040,10 +1181,12 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
         {page === "records" && <RecordsView initialJournalSearch={recordsIntent === "journal"} onOpenRecord={openRecord} />}
         <AppNav page={page} setPage={openPage} />
         <ShareManager open={sharePanelOpen} loading={shareLinksLoading} creating={sharing} revokingId={revokingShareId} now={shareManagerNow} demo={!userId} error={shareError} shares={shareLinks} onClose={() => setSharePanelOpen(false)} onCreate={shareSchedule} onRevoke={revokeShare} />
+        {reasonPrompt && <ChangeReasonDialog title={reasonPrompt.title} description={reasonPrompt.description} value={reasonText} onChange={setReasonText} onCancel={() => finishReasonPrompt(null)} onSubmit={() => finishReasonPrompt(reasonText)} />}
         {notice && <div className="toast" role="status"><CheckCircle2 size={17} /> {notice}<button onClick={() => setNotice(null)} aria-label="알림 닫기"><X size={15} /></button></div>}
         <DragOverlay className="drag-overlay" dropAnimation={null}>{(source) => <div className="drag-preview"><GripVertical size={15} /><span>{String(source.data.title ?? "타임블록")}</span></div>}</DragOverlay>
       </div>
     </DragDropProvider>
+    </ChangeReasonContext.Provider>
   );
 }
 

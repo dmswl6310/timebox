@@ -96,7 +96,7 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
     closedPlanIds.length
       ? supabase
           .from("schedule_change_events")
-          .select("id,daily_plan_id,time_block_id,change_type,before_state,after_state,created_at")
+          .select("id,daily_plan_id,time_block_id,change_type,before_state,after_state,reason,created_at")
           .eq("user_id", userId)
           .in("daily_plan_id", closedPlanIds)
           .order("created_at", { ascending: false })
@@ -298,7 +298,7 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
       date,
       kind: "schedule",
       title: block?.title ?? before?.title ?? after?.title ?? "타임블록",
-      detail: `${changeLabels[change.change_type] ?? "일정 변경"}${details.length ? ` · ${details.join(" · ")}` : ""}`,
+      detail: `${changeLabels[change.change_type] ?? "일정 변경"}${details.length ? ` · ${details.join(" · ")}` : ""}${change.reason ? ` · 이유: ${change.reason}` : ""}`,
     });
   }
 

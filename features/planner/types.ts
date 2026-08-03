@@ -23,6 +23,7 @@ export type TimeBlock = {
   duration: number;
   baselineStart?: number;
   baselineDuration?: number;
+  changeReasons?: Partial<Record<"created" | "moved" | "resized" | "cancelled", string>>;
   actualMinutes?: number;
   type: BlockType;
   color: Task["color"];

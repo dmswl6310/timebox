@@ -40,10 +40,12 @@ function seed({
 } = {}): PlannerSeed {
   return {
     userId: null,
+    userEmail: null,
     dailyPlanId: null,
     planDate: "2026-08-04",
     timezone: "Asia/Seoul",
     tasks,
+    availableTags: ["미분류", "업무"],
     blocks,
     selectedBlockId: null,
     journal: "",
@@ -136,6 +138,45 @@ describe("일정 크기와 예상 시간 동기화", () => {
     expect(store.getState().blocks[0]?.duration).toBe(60);
     expect(store.getState().tasks[0]?.estimate).toBe(60);
     expect(store.getState().blocks[0]?.changeReasons?.resized).toBe("예상보다 검토할 내용이 많음");
+  });
+});
+
+describe("사용자 태그", () => {
+  it("원하는 새 태그를 공백을 정리해 내 태그 목록에 추가한다", () => {
+    const store = createPlannerStore(seed());
+
+    store.getState().addTag("  사이드   프로젝트  ");
+
+    expect(store.getState().availableTags).toContain("사이드 프로젝트");
+    expect(store.getState().notice).toContain("태그를 추가");
+  });
+
+  it("대소문자만 다른 중복 태그를 추가하지 않는다", () => {
+    const store = createPlannerStore(seed({
+      tasks: [{ ...task("task-1"), tag: "Focus" }],
+    }));
+    store.setState({ availableTags: ["미분류", "Focus"] });
+
+    store.getState().addTag("focus");
+
+    expect(store.getState().availableTags.filter((tag) => tag.toLocaleLowerCase() === "focus")).toHaveLength(1);
+    expect(store.getState().notice).toContain("이미 있는 태그");
+  });
+
+  it("할 일의 태그를 바꾸면 일정 블록과 내 태그 목록에도 즉시 반영한다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+    }));
+
+    store.getState().updateTask("task-1", {
+      title: "작업 task-1",
+      tag: "운동",
+      estimate: 30,
+    });
+
+    expect(store.getState().tasks[0]?.tag).toBe("운동");
+    expect(store.getState().availableTags).toContain("운동");
+    expect(store.getState().blocks[0]?.color).toBe(store.getState().tasks[0]?.color);
   });
 });
 

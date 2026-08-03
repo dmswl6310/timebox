@@ -17,17 +17,20 @@ import {
   persistTaskCreate,
   persistTaskDiscard,
   persistTaskEstimate,
+  persistTagCreate,
   persistTaskUpdate,
 } from "./persistence";
-import { colorForTag, normalizeTagName } from "./tag-utils";
+import { colorForTag, normalizeTagName, tagSuggestions } from "./tag-utils";
 import type { MobileView, PlanStatus, TagName, Task, TimeBlock } from "./types";
 
 export type PlannerSeed = {
   userId: string | null;
+  userEmail: string | null;
   dailyPlanId: string | null;
   planDate: string;
   timezone: string;
   tasks: Task[];
+  availableTags: string[];
   blocks: TimeBlock[];
   selectedBlockId: string | null;
   journal: string;
@@ -56,10 +59,12 @@ const demoBlocks: TimeBlock[] = [
 
 export const demoSeed: PlannerSeed = {
   userId: null,
+  userEmail: null,
   dailyPlanId: null,
   planDate: dateInTimeZone(),
   timezone: "Asia/Seoul",
   tasks: demoTasks,
+  availableTags: tagSuggestions(demoTasks.map((task) => task.tag)),
   blocks: demoBlocks,
   selectedBlockId: "block-interview",
   journal: "오전에는 생각보다 집중이 잘 됐다. 면접 답변은 완벽하게 하려기보다 먼저 끝까지 말해보는 데 집중하자.",
@@ -70,6 +75,7 @@ export const demoSeed: PlannerSeed = {
 export type PlannerState = PlannerSeed & {
   mobileView: MobileView;
   notice: string | null;
+  addTag: (name: string) => void;
   addTask: (title: string, tag: TagName, estimate: number) => void;
   updateTask: (taskId: string, patch: Pick<Task, "title" | "tag" | "estimate">) => void;
   toggleMit: (taskId: string) => void;
@@ -109,6 +115,7 @@ function cloneSeed(seed: PlannerSeed): PlannerSeed {
   return {
     ...seed,
     tasks: seed.tasks.map((task) => ({ ...task })),
+    availableTags: [...seed.availableTags],
     blocks: seed.blocks.map((block) => ({ ...block })),
   };
 }
@@ -142,6 +149,21 @@ export function createPlannerStore(seed: PlannerSeed) {
       mobileView: "schedule",
       notice: null,
 
+      addTag: (name) => {
+        const cleanTag = normalizeTagName(name);
+        const state = get();
+        if (state.availableTags.some((tag) => tag.localeCompare(cleanTag, "ko", { sensitivity: "base" }) === 0)) {
+          set({ notice: "이미 있는 태그예요." });
+          return;
+        }
+        set({
+          availableTags: tagSuggestions([...state.availableTags, cleanTag]),
+          notice: `‘${cleanTag}’ 태그를 추가했어요.`,
+        });
+        const ctx = context();
+        if (ctx) save(() => persistTagCreate(ctx, cleanTag, colorForTag(cleanTag)));
+      },
+
       addTask: (title, tag, estimate) => {
         const cleanTitle = title.trim();
         if (!cleanTitle) return;
@@ -151,7 +173,11 @@ export function createPlannerStore(seed: PlannerSeed) {
           tag: cleanTag, color: colorForTag(cleanTag), energy: "보통",
           isMit: false, completed: false,
         };
-        set((state) => ({ tasks: [task, ...state.tasks], notice: "브레인덤프에 추가했어요." }));
+        set((state) => ({
+          tasks: [task, ...state.tasks],
+          availableTags: tagSuggestions([...state.availableTags, cleanTag]),
+          notice: "브레인덤프에 추가했어요.",
+        }));
         const ctx = context();
         if (ctx) save(() => persistTaskCreate(ctx, task));
       },
@@ -171,6 +197,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         };
         set({
           tasks: state.tasks.map((task) => task.id === taskId ? nextTask : task),
+          availableTags: tagSuggestions([...state.availableTags, cleanTag]),
           blocks: state.planStatus === "closed"
             ? state.blocks
             : state.blocks.map((block) => block.taskId === taskId

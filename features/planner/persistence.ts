@@ -97,6 +97,32 @@ export async function persistTaskCreate(context: PersistenceContext, task: Task)
   await replaceTaskTag(context, task);
 }
 
+export async function persistTagCreate(
+  context: PersistenceContext,
+  name: string,
+  color: Task["color"],
+) {
+  const supabase = createClient();
+  const { data: existingTags, error: readError } = await supabase
+    .from("tags")
+    .select("id,name")
+    .eq("user_id", context.userId)
+    .limit(1000);
+  assertSuccess(readError);
+
+  const exists = existingTags?.some(
+    (tag) => tag.name.localeCompare(name, "ko", { sensitivity: "base" }) === 0,
+  );
+  if (exists) return;
+
+  const { error } = await supabase.from("tags").insert({
+    user_id: context.userId,
+    name,
+    color,
+  });
+  assertSuccess(error);
+}
+
 export async function persistTaskUpdate(
   context: PersistenceContext,
   task: Task,

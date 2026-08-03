@@ -23,6 +23,7 @@ import {
   Inbox,
   LoaderCircle,
   Link2,
+  LogOut,
   Minus,
   NotebookPen,
   PanelLeftClose,
@@ -35,6 +36,7 @@ import {
   Tag,
   Target,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -219,6 +221,10 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
           <button onClick={save}><Check size={15} /> 저장</button>
           <button className="icon-only" onClick={() => setEditing(false)} aria-label="취소"><X size={15} /></button>
         </div>
+        <div className="note-tag-choices" aria-label="저장된 태그 선택">
+          {tagOptions.map((option) => <button type="button" key={option} data-active={option === tag} onClick={() => setTag(option)}>{option}</button>)}
+        </div>
+        <small className="note-tag-help">원하는 태그가 없으면 태그 입력칸에 새 이름을 직접 적어 저장하세요.</small>
       </div>
     );
   }
@@ -267,14 +273,16 @@ function AddTaskForm({ tagOptions }: { tagOptions: string[] }) {
         </label>
         <label><Clock3 size={13} /><select value={estimate} onChange={(event) => setEstimate(Number(event.target.value))}>{ESTIMATE_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes}분 예상</option>)}</select></label>
       </div>
+      <small className="brain-tag-help">태그 칸에 새 이름을 직접 입력하면 원하는 태그가 함께 저장돼요.</small>
     </form>
   );
 }
 
 function PrioritySection() {
   const tasks = usePlannerStore((state) => state.tasks);
+  const availableTags = usePlannerStore((state) => state.availableTags);
   const priorities = tasks.filter((task) => task.isMit && !task.completed).slice(0, 3);
-  const tagOptions = tagSuggestions(tasks.map((task) => task.tag));
+  const tagOptions = tagSuggestions([...availableTags, ...tasks.map((task) => task.tag)]);
   return (
     <section className="paper-section priority-note">
       <div className="paper-section-title"><span>TOP PRIORITIES</span><small>이날 가장 중요한 3가지</small></div>
@@ -289,8 +297,9 @@ function PrioritySection() {
 
 function BrainDumpSection() {
   const tasks = usePlannerStore((state) => state.tasks);
+  const availableTags = usePlannerStore((state) => state.availableTags);
   const active = tasks.filter((task) => !task.completed);
-  const tagOptions = tagSuggestions(tasks.map((task) => task.tag));
+  const tagOptions = tagSuggestions([...availableTags, ...tasks.map((task) => task.tag)]);
   return (
     <section className="paper-section brain-note">
       <div className="paper-section-title"><span>BRAIN DUMP</span><small>모든 생각 쏟아내기 · {active.length}</small></div>
@@ -721,6 +730,70 @@ function ShareManager({
   );
 }
 
+function ProfilePanel({
+  open,
+  email,
+  demo,
+  tags,
+  mode,
+  onClose,
+  onAddTag,
+  onModeChange,
+  onSignOut,
+}: {
+  open: boolean;
+  email: string | null;
+  demo: boolean;
+  tags: string[];
+  mode: ServiceMode;
+  onClose: () => void;
+  onAddTag: (name: string) => void;
+  onModeChange: (mode: ServiceMode) => void;
+  onSignOut: () => void;
+}) {
+  const [tagName, setTagName] = useState("");
+
+  if (!open) return null;
+  return (
+    <div className="profile-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="profile-panel" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+        <header>
+          <div><UserRound size={19} /><div><h2 id="profile-title">마이페이지</h2><p>계정과 내 태그, 화면 모드를 관리하세요.</p></div></div>
+          <button onClick={onClose} aria-label="마이페이지 닫기"><X size={17} /></button>
+        </header>
+        <div className="profile-content">
+          <section className="profile-account">
+            <span>내 계정</span>
+            <strong>{demo ? "데모 사용자" : email ?? "로그인 사용자"}</strong>
+            <small>{demo ? "로그인하면 태그와 계획이 계정에 저장돼요." : "로그인된 이메일 계정"}</small>
+          </section>
+          <section className="profile-section">
+            <div><Tag size={15} /><div><strong>내 태그</strong><small>여기서 추가한 태그는 할 일 수정 화면에서도 선택할 수 있어요.</small></div></div>
+            <form className="profile-tag-form" onSubmit={(event) => {
+              event.preventDefault();
+              if (!tagName.trim()) return;
+              onAddTag(tagName);
+              setTagName("");
+            }}>
+              <input value={tagName} onChange={(event) => setTagName(event.target.value)} maxLength={30} aria-label="새 태그 이름" placeholder="예: 운동, 사이드 프로젝트" />
+              <button type="submit" disabled={!tagName.trim()}><Plus size={14} />태그 추가</button>
+            </form>
+            <div className="profile-tags" aria-label="저장된 내 태그">{tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+          </section>
+          <section className="profile-section">
+            <div><NotebookPen size={15} /><div><strong>화면 모드</strong><small>기기별로 마지막 선택을 기억해요.</small></div></div>
+            <div className="profile-mode-switch">
+              <button data-active={mode === "professional"} onClick={() => onModeChange("professional")}><BriefcaseBusiness size={14} />일잘러 모드</button>
+              <button data-active={mode === "paper"} onClick={() => onModeChange("paper")}><NotebookPen size={14} />종이 모드</button>
+            </div>
+          </section>
+        </div>
+        <footer><button className="profile-signout" onClick={onSignOut}><LogOut size={15} />{demo ? "로그인 화면으로" : "로그아웃"}</button></footer>
+      </section>
+    </div>
+  );
+}
+
 function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journal: string, mood: number): RecordBundle {
   const tagMinutes = new Map<string, { plannedMinutes: number; actualMinutes: number }>();
   for (const block of blocks) {
@@ -972,14 +1045,18 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   const notice = usePlannerStore((state) => state.notice);
   const setNotice = usePlannerStore((state) => state.setNotice);
   const userId = usePlannerStore((state) => state.userId);
+  const userEmail = usePlannerStore((state) => state.userEmail);
+  const availableTags = usePlannerStore((state) => state.availableTags);
+  const addTag = usePlannerStore((state) => state.addTag);
   const dailyPlanId = usePlannerStore((state) => state.dailyPlanId);
   const planDate = usePlannerStore((state) => state.planDate);
   const planStatus = usePlannerStore((state) => state.planStatus);
   const [page, setPage] = useState<Page>(initialPage);
-  const serviceMode = useSyncExternalStore(subscribeServiceMode, getServiceModeSnapshot, () => "paper");
+  const serviceMode = useSyncExternalStore(subscribeServiceMode, getServiceModeSnapshot, () => "paper" as ServiceMode);
   const [recordsIntent, setRecordsIntent] = useState<"all" | "journal">("all");
   const [sharing, setSharing] = useState(false);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
+  const [profilePanelOpen, setProfilePanelOpen] = useState(false);
   const [shareLinks, setShareLinks] = useState<ShareLinkSummary[]>([]);
   const [shareLinksLoading, setShareLinksLoading] = useState(false);
   const [shareError, setShareError] = useState("");
@@ -1085,6 +1162,15 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   }, [sharePanelOpen]);
 
   useEffect(() => {
+    if (!profilePanelOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setProfilePanelOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [profilePanelOpen]);
+
+  useEffect(() => {
     if (!reasonPrompt) return;
     const cancelOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -1155,9 +1241,10 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   };
 
   const signOut = async () => {
-    if (!userId) { setNotice("지금은 데모 모드예요."); return; }
+    if (!userId) { window.location.href = "/login"; return; }
     const supabase = createClient();
-    await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut();
+    if (error) { setNotice("로그아웃하지 못했어요. 다시 시도해 주세요."); return; }
     window.location.href = "/login";
   };
 
@@ -1173,7 +1260,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
               <button data-active={serviceMode === "professional"} onClick={() => changeServiceMode("professional")} title="분리된 카드형 일잘러 모드"><BriefcaseBusiness size={14} /><span>일잘러</span></button>
               <button data-active={serviceMode === "paper"} onClick={() => changeServiceMode("paper")} title="손글씨 종이 플래너 모드"><NotebookPen size={14} /><span>종이</span></button>
             </div>
-            <button onClick={openShareManager}><Copy size={15} /><span>공유</span></button><button className="paper-avatar" onClick={signOut} title="로그아웃">J</button>
+            <button onClick={openShareManager}><Copy size={15} /><span>공유</span></button><button className="paper-avatar" onClick={() => setProfilePanelOpen(true)} title="마이페이지" aria-label="마이페이지 열기">{userEmail?.slice(0, 1).toUpperCase() ?? (userId ? "나" : "D")}</button>
           </div>
         </header>
         {page === "today" && <TodayView todayLabel={todayLabel} />}
@@ -1181,6 +1268,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
         {page === "records" && <RecordsView initialJournalSearch={recordsIntent === "journal"} onOpenRecord={openRecord} />}
         <AppNav page={page} setPage={openPage} />
         <ShareManager open={sharePanelOpen} loading={shareLinksLoading} creating={sharing} revokingId={revokingShareId} now={shareManagerNow} demo={!userId} error={shareError} shares={shareLinks} onClose={() => setSharePanelOpen(false)} onCreate={shareSchedule} onRevoke={revokeShare} />
+        <ProfilePanel open={profilePanelOpen} email={userEmail} demo={!userId} tags={availableTags} mode={serviceMode} onClose={() => setProfilePanelOpen(false)} onAddTag={addTag} onModeChange={changeServiceMode} onSignOut={signOut} />
         {reasonPrompt && <ChangeReasonDialog title={reasonPrompt.title} description={reasonPrompt.description} value={reasonText} onChange={setReasonText} onCancel={() => finishReasonPrompt(null)} onSubmit={() => finishReasonPrompt(reasonText)} />}
         {notice && <div className="toast" role="status"><CheckCircle2 size={17} /> {notice}<button onClick={() => setNotice(null)} aria-label="알림 닫기"><X size={15} /></button></div>}
         <DragOverlay className="drag-overlay" dropAnimation={null}>{(source) => <div className="drag-preview"><GripVertical size={15} /><span>{String(source.data.title ?? "타임블록")}</span></div>}</DragOverlay>

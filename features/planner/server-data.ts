@@ -3,7 +3,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { dateInTimeZone } from "@/lib/date";
 import type { PlannerSeed } from "./store";
-import { normalizeTagName, savedTagColor } from "./tag-utils";
+import { normalizeTagName, savedTagColor, tagSuggestions } from "./tag-utils";
 import type { Task, TimeBlock } from "./types";
 
 type TaskRow = {
@@ -69,6 +69,7 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
   if (claimsError || !claimsData?.claims?.sub) return null;
 
   const userId = claimsData.claims.sub;
+  const userEmail = typeof claimsData.claims.email === "string" ? claimsData.claims.email : null;
   const timezone = "Asia/Seoul";
   const planDate = requestedPlanDate ?? dateInTimeZone(timezone);
 
@@ -95,7 +96,7 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
     plan = result.data;
   }
 
-  const [prioritiesResult, blocksResult, reflectionResult, blockReasonsResult] =
+  const [prioritiesResult, blocksResult, reflectionResult, blockReasonsResult, allTagsResult] =
     await Promise.all([
       supabase
         .from("daily_priorities")
@@ -121,9 +122,14 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
         .select("id,change_reasons")
         .eq("user_id", userId)
         .eq("daily_plan_id", plan.id),
+      supabase
+        .from("tags")
+        .select("name")
+        .eq("user_id", userId)
+        .order("name"),
     ]);
 
-  for (const result of [prioritiesResult, blocksResult, reflectionResult]) {
+  for (const result of [prioritiesResult, blocksResult, reflectionResult, blockReasonsResult, allTagsResult]) {
     if (result.error) throw new Error(result.error.message);
   }
 
@@ -236,10 +242,15 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
 
   return {
     userId,
+    userEmail,
     dailyPlanId: plan.id,
     planDate,
     timezone: plan.timezone,
     tasks,
+    availableTags: tagSuggestions([
+      ...(allTagsResult.data ?? []).map((tag) => tag.name),
+      ...tasks.map((task) => task.tag),
+    ]),
     blocks,
     selectedBlockId: blocks[0]?.id ?? null,
     journal: reflectionResult.data?.content ?? "",

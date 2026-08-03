@@ -1884,6 +1884,79 @@ textarea:focus-visible {
   }
 }
 
+/* Scheduling state and stable block interactions */
+.note-task[data-scheduled="true"] .note-drag {
+  cursor: default;
+  opacity: .28;
+}
+
+.note-task[data-scheduled="true"] .note-task-copy {
+  cursor: default;
+}
+
+.note-task-copy span em {
+  margin-left: 5px;
+  padding: 2px 5px;
+  border-radius: 20px;
+  background: #e6eee8;
+  color: #3e654d;
+  font-style: normal;
+  font-size: .88em;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.paper-block[data-mit="true"] {
+  border-color: color-mix(in srgb, #d99a1b 75%, var(--block-color));
+  box-shadow: inset 3px 0 #e1a221, 0 2px 7px rgba(122, 88, 17, .12);
+}
+
+.paper-block-title {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.paper-block-mit {
+  flex: 0 0 auto;
+  color: #cf8a00;
+}
+
+.paper-block-drag {
+  z-index: 1;
+  justify-content: flex-start;
+  width: calc(100% - 30px);
+  padding-left: 2px;
+  touch-action: none;
+}
+
+.paper-block-drag svg { opacity: .55; }
+.paper-block:hover .paper-block-drag svg,
+.paper-block[data-selected="true"] .paper-block-drag svg { opacity: 1; }
+
+.remove-block-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 31px;
+  padding: 0 9px;
+  border: 1px solid #edc7c1;
+  border-radius: 7px;
+  background: #fff7f5;
+  color: #a14940;
+  font-size: 9px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+@media (max-width: 540px) {
+  .remove-block-action { margin-left: auto; }
+  .note-task-copy span em { display: none; }
+}
+
 @media (max-width: 520px) {
   .date-title-row h1 {
     min-width: 125px;
@@ -3387,4 +3460,31 @@ textarea:focus-visible {
   .paper-app[data-mode="professional"] .paper-notes { display: block; min-width: 0; border: 0; background: transparent; box-shadow: none; }
   .paper-app[data-mode="professional"] .brain-note { margin-top: 14px; }
   .paper-app[data-mode="professional"] .timetable-section { margin-top: 14px; }
+}
+
+/* Keep interaction overrides last so both visual modes behave identically. */
+.paper-block[data-mit="true"] {
+  border-color: color-mix(in srgb, #d99a1b 75%, var(--block-color));
+  box-shadow: inset 3px 0 #e1a221, 0 2px 7px rgba(122, 88, 17, .12);
+}
+
+.paper-block[data-mit="true"][data-selected="true"] {
+  box-shadow: inset 3px 0 #e1a221, 0 0 0 2px #263f34, 0 4px 10px rgba(38,63,52,.15);
+}
+
+.paper-block-title {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.paper-block-drag {
+  z-index: 1;
+  justify-content: flex-start;
+  width: calc(100% - 30px);
+  padding-left: 2px;
+  touch-action: none;
 }

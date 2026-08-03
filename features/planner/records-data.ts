@@ -258,7 +258,7 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
   for (const change of changes) {
     const block = change.time_block_id ? blockById.get(change.time_block_id) : undefined;
     const date = planDateById.get(change.daily_plan_id) ?? localDate(change.created_at);
-    const before = change.before_state as { start?: number; duration?: number } | null;
+    const before = change.before_state as { title?: string; start?: number; duration?: number } | null;
     const after = change.after_state as { start?: number; duration?: number } | null;
     const details: string[] = [];
     if (before?.start !== undefined && after?.start !== undefined) details.push(`${Math.floor(before.start / 60)}:${String(before.start % 60).padStart(2, "0")} → ${Math.floor(after.start / 60)}:${String(after.start % 60).padStart(2, "0")}`);
@@ -268,7 +268,7 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
       occurredAt: change.created_at,
       date,
       kind: "schedule",
-      title: block?.title ?? "타임블록",
+      title: block?.title ?? before?.title ?? "타임블록",
       detail: `${changeLabels[change.change_type] ?? "일정 변경"}${details.length ? ` · ${details.join(" · ")}` : ""}`,
     });
   }

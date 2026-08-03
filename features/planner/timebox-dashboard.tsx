@@ -92,6 +92,7 @@ function Logo() {
 }
 
 function CompactTask({ task, priority = false }: { task: Task; priority?: boolean }) {
+  const blocks = usePlannerStore((state) => state.blocks);
   const toggleMit = usePlannerStore((state) => state.toggleMit);
   const scheduleTask = usePlannerStore((state) => state.scheduleTask);
   const updateTask = usePlannerStore((state) => state.updateTask);
@@ -100,9 +101,11 @@ function CompactTask({ task, priority = false }: { task: Task; priority?: boolea
   const [title, setTitle] = useState(task.title);
   const [tag, setTag] = useState<TagName>(task.tag);
   const [estimate, setEstimate] = useState(task.estimate);
+  const scheduled = blocks.some((block) => block.taskId === task.id);
   const { ref, handleRef, isDragging } = useDraggable({
     id: `${priority ? "priority" : "task"}:${task.id}`,
     data: { kind: "task", taskId: task.id, title: task.title },
+    disabled: scheduled,
   });
 
   const save = () => {
@@ -129,14 +132,14 @@ function CompactTask({ task, priority = false }: { task: Task; priority?: boolea
   }
 
   return (
-    <article ref={ref} className="note-task" data-dragging={isDragging} data-priority={priority}>
+    <article ref={ref} className="note-task" data-dragging={isDragging} data-priority={priority} data-scheduled={scheduled}>
       <button ref={handleRef} className="note-drag" aria-label={`${task.title} 드래그`}><GripVertical size={15} /></button>
       <button className="note-star" data-active={task.isMit} onClick={() => toggleMit(task.id)} aria-label="오늘의 우선순위 전환">
         <Star size={15} fill={task.isMit ? "currentColor" : "none"} />
       </button>
-      <button className="note-task-copy" onClick={() => scheduleTask(task.id)} title="빈 시간에 배치">
+      <button className="note-task-copy" onClick={() => scheduleTask(task.id)} title={scheduled ? "이미 시간표에 배치됨" : "빈 시간에 배치"} disabled={scheduled}>
         <strong>{task.title}</strong>
-        <span><Tag size={11} /> {task.tag} · {task.estimate}분</span>
+        <span><Tag size={11} /> {task.tag} · {task.estimate}분{scheduled && <em>시간표에 배치됨</em>}</span>
       </button>
       <button className="icon-only note-edit" onClick={() => setEditing(true)} aria-label="할 일 수정"><Pencil size={14} /></button>
       {!priority && <button className="icon-only note-delete" onClick={() => discardTask(task.id)} aria-label="휴지통으로 이동"><Trash2 size={14} /></button>}
@@ -209,6 +212,7 @@ function TimeSlot({ minutes, visible }: { minutes: number; visible: boolean }) {
 }
 
 function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number; isLast: boolean }) {
+  const tasks = usePlannerStore((state) => state.tasks);
   const selectBlock = usePlannerStore((state) => state.selectBlock);
   const toggleBlockComplete = usePlannerStore((state) => state.toggleBlockComplete);
   const selectedBlockId = usePlannerStore((state) => state.selectedBlockId);
@@ -220,9 +224,10 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
   const startQuarter = Math.floor((start - hourStart) / 15);
   const span = Math.max(1, Math.ceil((end - start) / 15));
   const first = start === block.start;
+  const isMit = Boolean(block.taskId && tasks.find((task) => task.id === block.taskId)?.isMit);
   const { ref, handleRef, isDragging } = useDraggable({
     id: `block:${block.id}:${hour}`,
-    data: { kind: "block", blockId: block.id, title: block.title },
+    data: { kind: "block", blockId: block.id, title: block.title, segmentOffset: start - block.start },
   });
 
   const beginResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -259,12 +264,13 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
       data-color={block.color}
       data-completed={block.status === "completed"}
       data-selected={selectedBlockId === block.id}
+      data-mit={isMit}
       data-dragging={isDragging}
       style={{ gridColumn: `${startQuarter + 1} / span ${span}` }}
       onClick={() => selectBlock(block.id)}
     >
-      <button ref={handleRef} className="paper-block-drag" aria-label={`${block.title} 이동`}><GripVertical size={12} /></button>
-      <span className="paper-block-title">{first ? block.title : "↳ 계속"}</span>
+      <button ref={handleRef} className="paper-block-drag" aria-label={`${block.title} 이동`} title="블록 몸통을 끌어서 이동"><GripVertical size={12} /></button>
+      <span className="paper-block-title">{first && isMit && <Star className="paper-block-mit" size={11} fill="currentColor" />}{first ? block.title : "↳ 계속"}</span>
       {first && <small>{formatTime(block.start)} · {formatDuration(block.duration)}</small>}
       {isLast && (
         <>
@@ -285,6 +291,7 @@ function SelectedBlockBar() {
   const updateActualMinutes = usePlannerStore((state) => state.updateActualMinutes);
   const addBufferAfter = usePlannerStore((state) => state.addBufferAfter);
   const toggleBlockComplete = usePlannerStore((state) => state.toggleBlockComplete);
+  const removeBlock = usePlannerStore((state) => state.removeBlock);
   const selected = blocks.find((block) => block.id === selectedBlockId);
   if (!selected) return null;
   const changed = selected.baselineStart !== undefined && (selected.start !== selected.baselineStart || selected.duration !== selected.baselineDuration);
@@ -300,6 +307,7 @@ function SelectedBlockBar() {
       </div>
       <label className="actual-time">실제 <input type="number" min="5" step="5" value={selected.actualMinutes ?? selected.duration} onChange={(event) => updateActualMinutes(selected.id, Number(event.target.value))} />분</label>
       <button className="quiet-action" onClick={() => addBufferAfter(selected.id)}>+ 15분 여유</button>
+      <button className="remove-block-action" onClick={() => removeBlock(selected.id)}><Trash2 size={14} /> 일정에서 빼기</button>
       <button className="complete-action" data-completed={selected.status === "completed"} onClick={() => toggleBlockComplete(selected.id)}><Check size={15} /> {selected.status === "completed" ? "완료됨" : "완료"}</button>
     </div>
   );
@@ -573,7 +581,7 @@ function TimeboxDashboardInner({ todayLabel }: { todayLabel: string }) {
     const start = Number(targetId.slice(5));
     if (!Number.isFinite(start)) return;
     if (source.data.kind === "task") scheduleTask(String(source.data.taskId), start);
-    if (source.data.kind === "block") moveBlock(String(source.data.blockId), start);
+    if (source.data.kind === "block") moveBlock(String(source.data.blockId), start - Number(source.data.segmentOffset ?? 0));
   };
 
   useEffect(() => {
@@ -614,7 +622,7 @@ function TimeboxDashboardInner({ todayLabel }: { todayLabel: string }) {
         {page === "records" && <RecordsView initialJournalSearch={recordsIntent === "journal"} />}
         <AppNav page={page} setPage={openPage} />
         {notice && <div className="toast" role="status"><CheckCircle2 size={17} /> {notice}<button onClick={() => setNotice(null)} aria-label="알림 닫기"><X size={15} /></button></div>}
-        <DragOverlay className="drag-overlay">{(source) => <div className="drag-preview"><GripVertical size={15} /><span>{String(source.data.title ?? "타임블록")}</span></div>}</DragOverlay>
+        <DragOverlay className="drag-overlay" dropAnimation={null}>{(source) => <div className="drag-preview"><GripVertical size={15} /><span>{String(source.data.title ?? "타임블록")}</span></div>}</DragOverlay>
       </div>
     </DragDropProvider>
   );

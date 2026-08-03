@@ -5,6 +5,7 @@ import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import {
   persistActualMinutes,
+  persistBlockCancel,
   persistBlockCompletion,
   persistBlockCreate,
   persistBlockMove,
@@ -14,6 +15,7 @@ import {
   persistScheduleChange,
   persistTaskCreate,
   persistTaskDiscard,
+  persistTaskEstimate,
   persistTaskUpdate,
 } from "./persistence";
 import type { MobileView, PlanStatus, TagName, Task, TimeBlock } from "./types";
@@ -88,6 +90,7 @@ export type PlannerState = PlannerSeed & {
   moveBlock: (blockId: string, start: number) => void;
   previewResizeBlock: (blockId: string, duration: number) => void;
   resizeBlock: (blockId: string, duration: number, originalDuration?: number) => void;
+  removeBlock: (blockId: string) => void;
   selectBlock: (blockId: string) => void;
   toggleBlockComplete: (blockId: string) => void;
   updateActualMinutes: (blockId: string, minutes: number) => void;
@@ -201,6 +204,10 @@ export function createPlannerStore(seed: PlannerSeed) {
         const state = get();
         const task = state.tasks.find((item) => item.id === taskId);
         if (!task) return;
+        if (state.blocks.some((block) => block.taskId === taskId)) {
+          set({ notice: "이미 시간표에 배치한 작업이에요. 기존 블록을 옮겨 주세요." });
+          return;
+        }
         const duration = task.estimate;
         const desiredStart = requestedStart ?? nextAvailableStart(state.blocks, duration);
         const block: TimeBlock = {
@@ -250,6 +257,9 @@ export function createPlannerStore(seed: PlannerSeed) {
         const safeDuration = Math.max(15, Math.min(snapped, 24 * 60 - block.start));
         set({
           blocks: state.blocks.map((item) => item.id === blockId ? { ...item, duration: safeDuration } : item),
+          tasks: block.taskId
+            ? state.tasks.map((task) => task.id === block.taskId ? { ...task, estimate: safeDuration } : task)
+            : state.tasks,
           selectedBlockId: blockId,
         });
       },
@@ -265,18 +275,57 @@ export function createPlannerStore(seed: PlannerSeed) {
           blocks: state.blocks.map((item) => item.id === blockId
             ? { ...item, duration: safeDuration }
             : item),
+          tasks: block.taskId
+            ? state.tasks.map((task) => task.id === block.taskId ? { ...task, estimate: safeDuration } : task)
+            : state.tasks,
           selectedBlockId: blockId,
           notice: `타임블록을 ${safeDuration}분으로 조정했어요.`,
         });
         const ctx = context();
         if (ctx) {
           save(persistBlockMove(ctx, blockId, block.start, safeDuration));
+          if (block.taskId) save(persistTaskEstimate(ctx, block.taskId, safeDuration));
           if (state.planStatus !== "draft" && previousDuration !== safeDuration) {
             track(persistScheduleChange(ctx, {
               blockId,
               type: "resized",
               before: { start: block.start, duration: previousDuration },
               after: { start: block.start, duration: safeDuration },
+            }));
+          }
+        }
+      },
+
+      removeBlock: (blockId) => {
+        const state = get();
+        const block = state.blocks.find((item) => item.id === blockId);
+        if (!block) return;
+        const blocks = state.blocks.filter((item) => item.id !== blockId);
+        const isCommittedChange = state.planStatus !== "draft";
+        set({
+          blocks,
+          selectedBlockId: blocks[0]?.id ?? null,
+          notice: isCommittedChange
+            ? "타임블록을 삭제하고 변경 기록에 남겼어요."
+            : block.taskId
+              ? "시간표에서 뺐어요. 작업은 브레인덤프에 남아 있어요."
+              : "타임블록을 삭제했어요.",
+        });
+        const ctx = context();
+        if (ctx) {
+          save(persistBlockCancel(ctx, blockId));
+          if (isCommittedChange) {
+            track(persistScheduleChange(ctx, {
+              blockId,
+              type: "cancelled",
+              before: {
+                title: block.title,
+                taskId: block.taskId ?? null,
+                start: block.start,
+                duration: block.duration,
+                status: block.status,
+              },
+              after: { status: "cancelled" },
             }));
           }
         }

@@ -107,6 +107,20 @@ export async function persistTaskUpdate(context: PersistenceContext, task: Task)
   await replaceTaskTag(context, task);
 }
 
+export async function persistTaskEstimate(
+  context: PersistenceContext,
+  taskId: string,
+  estimateMinutes: number,
+) {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("tasks")
+    .update({ estimate_minutes: estimateMinutes })
+    .eq("id", taskId)
+    .eq("user_id", context.userId);
+  assertSuccess(error);
+}
+
 export async function persistTaskDiscard(context: PersistenceContext, taskId: string) {
   const supabase = createClient();
   const { error } = await supabase
@@ -167,6 +181,16 @@ export async function persistBlockMove(
       planned_start: toIso(context.planDate, start),
       planned_end: toIso(context.planDate, start + duration),
     })
+    .eq("id", blockId)
+    .eq("user_id", context.userId);
+  assertSuccess(error);
+}
+
+export async function persistBlockCancel(context: PersistenceContext, blockId: string) {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("time_blocks")
+    .update({ status: "cancelled" })
     .eq("id", blockId)
     .eq("user_id", context.userId);
   assertSuccess(error);

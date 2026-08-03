@@ -3291,6 +3291,9 @@ textarea:focus-visible {
 .paper-block small { display: block; margin-top: 3px; color: #6f756f; font-size: 7.5px; white-space: nowrap; }
 .paper-block-check { position: absolute; top: 5px; right: 5px; display: grid; place-items: center; width: 14px; height: 14px; padding: 0; border: 1px solid color-mix(in srgb, var(--block-color) 70%, #777); border-radius: 50%; background: rgba(255,255,255,.6); }
 .paper-block-check[data-checked="true"] { background: #263f34; color: #fff; }
+.paper-block-delete { position: absolute; z-index: 7; right: 12px; bottom: 3px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; background: rgba(255,255,255,.76); color: #9d5b52; opacity: .62; }
+.paper-block-delete:hover,
+.paper-block[data-selected="true"] .paper-block-delete { background: #fff1ef; color: #a6483f; opacity: 1; }
 
 .selected-block-bar {
   display: flex;

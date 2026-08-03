@@ -41,7 +41,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { dateInTimeZone, shiftIsoDate, startOfIsoWeek } from "@/lib/date";
-import { createContext, FormEvent, useContext, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
+import { createContext, FormEvent, useContext, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { loadRecordBundle, type ActivityKind, type RecordBundle } from "./records-data";
 import { PlannerStoreProvider, usePlannerStore, type PlannerSeed } from "./store";
@@ -204,6 +204,21 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
     scheduleTask(task.id, undefined, reason);
   };
 
+  const deleteTask = async (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!scheduled || planStatus !== "committed") {
+      discardTask(task.id);
+      return;
+    }
+    const reason = await requestChangeReason(
+      "할 일과 일정을 삭제하는 이유",
+      `‘${task.title}’ 작업과 연결된 타임블록을 함께 삭제하는 이유를 남겨 주세요.`,
+    );
+    if (!reason?.trim()) return;
+    discardTask(task.id, reason);
+  };
+
   if (editing) {
     const tagListId = `task-tags-${priority ? "priority" : "brain"}-${task.id}`;
     return (
@@ -240,7 +255,7 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
         <span><Tag size={11} /> {task.tag} · {task.estimate}분{scheduled && <em>시간표에 배치됨</em>}</span>
       </button>
       <button className="icon-only note-edit" onClick={beginEditing} aria-label="할 일 수정"><Pencil size={14} /></button>
-      {!priority && <button className="icon-only note-delete" onClick={() => discardTask(task.id)} aria-label="휴지통으로 이동"><Trash2 size={14} /></button>}
+      {!priority && <button type="button" className="icon-only note-delete" onClick={deleteTask} aria-label={scheduled ? `${task.title} 할 일과 일정 함께 삭제` : `${task.title} 휴지통으로 이동`} title={scheduled ? "할 일과 연결된 타임블록 함께 삭제" : "할 일 삭제"}><Trash2 size={14} /></button>}
     </article>
   );
 }
@@ -327,6 +342,7 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
   const selectedBlockId = usePlannerStore((state) => state.selectedBlockId);
   const previewResizeBlock = usePlannerStore((state) => state.previewResizeBlock);
   const resizeBlock = usePlannerStore((state) => state.resizeBlock);
+  const removeBlock = usePlannerStore((state) => state.removeBlock);
   const requestChangeReason = useChangeReason();
   const hourStart = hour * 60;
   const start = Math.max(block.start, hourStart);
@@ -384,6 +400,19 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
     window.addEventListener("pointercancel", finish, { once: true });
   };
 
+  const deleteBlock = async (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const reason = await reasonForChange(
+      planStatus,
+      requestChangeReason,
+      "일정에서 빼는 이유",
+      `‘${block.title}’ 타임블록을 일정에서 빼는 이유를 남겨 주세요. 작업은 브레인덤프에 남아요.`,
+    );
+    if (reason === null) return;
+    removeBlock(block.id, reason);
+  };
+
   return (
     <article
       ref={ref}
@@ -399,6 +428,7 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
       {planStatus !== "closed" && <button ref={handleRef} className="paper-block-drag" aria-label={`${block.title} 이동`} title="블록 몸통을 끌어서 이동"><GripVertical size={12} /></button>}
       <span className="paper-block-title">{first && isMit && <Star className="paper-block-mit" size={11} fill="currentColor" />}{first ? block.title : "↳ 계속"}</span>
       {first && <small>{formatTime(block.start)} · {formatDuration(block.duration)}</small>}
+      {first && planStatus !== "closed" && <button className="paper-block-delete" onClick={deleteBlock} aria-label={`${block.title} 일정에서 삭제`} title="일정에서 바로 빼기"><Trash2 size={11} /></button>}
       {isLast && planStatus !== "closed" && (
         <>
           <button className="paper-block-check" data-checked={block.status === "completed"} onClick={(event) => { event.stopPropagation(); toggleBlockComplete(block.id); }} aria-label="완료 전환">

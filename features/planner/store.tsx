@@ -92,7 +92,7 @@ export type PlannerState = PlannerSeed & {
   toggleBlockComplete: (blockId: string) => void;
   updateActualMinutes: (blockId: string, minutes: number) => void;
   addBufferAfter: (blockId: string, reason?: string) => void;
-  discardTask: (taskId: string) => void;
+  discardTask: (taskId: string, reason?: string) => void;
   setMobileView: (view: MobileView) => void;
   setJournal: (value: string) => void;
   setMood: (value: number) => void;
@@ -461,10 +461,34 @@ export function createPlannerStore(seed: PlannerSeed) {
         }
       },
 
-      discardTask: (taskId) => {
-        set((state) => ({ tasks: state.tasks.filter((task) => task.id !== taskId), notice: "할 일을 휴지통으로 옮겼어요." }));
+      discardTask: (taskId, reason) => {
+        const state = get();
+        const linkedBlock = state.blocks.find((block) => block.taskId === taskId);
+        if (linkedBlock && state.planStatus === "closed") {
+          set({ notice: "일과를 완료한 일정의 작업은 삭제할 수 없어요." });
+          return;
+        }
+        if (linkedBlock && state.planStatus === "committed" && !reason?.trim()) {
+          set({ notice: "확정된 일정의 작업을 삭제하려면 변경 이유가 필요해요." });
+          return;
+        }
+        const changeReasons = linkedBlock && state.planStatus === "committed"
+          ? { ...linkedBlock.changeReasons, cancelled: reason?.trim() }
+          : linkedBlock?.changeReasons;
+        const blocks = linkedBlock ? state.blocks.filter((block) => block.id !== linkedBlock.id) : state.blocks;
+        set({
+          tasks: state.tasks.filter((task) => task.id !== taskId),
+          blocks,
+          selectedBlockId: linkedBlock && state.selectedBlockId === linkedBlock.id ? blocks[0]?.id ?? null : state.selectedBlockId,
+          notice: linkedBlock
+            ? "할 일과 연결된 타임블록을 함께 삭제했어요."
+            : "할 일을 휴지통으로 옮겼어요.",
+        });
         const ctx = context();
-        if (ctx) save(() => persistTaskDiscard(ctx, taskId));
+        if (ctx) {
+          if (linkedBlock) save(() => persistBlockCancel(ctx, linkedBlock.id, changeReasons));
+          save(() => persistTaskDiscard(ctx, taskId));
+        }
       },
 
       setMobileView: (mobileView) => set({ mobileView }),

@@ -198,6 +198,57 @@ describe("사용자 태그", () => {
   });
 });
 
+describe("브레인덤프 작업 삭제", () => {
+  it("확정 전 배치된 작업을 삭제하면 연결된 타임블록도 함께 없앤다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+    }));
+
+    store.getState().discardTask("task-1");
+
+    expect(store.getState().tasks).toHaveLength(0);
+    expect(store.getState().blocks).toHaveLength(0);
+    expect(store.getState().notice).toContain("함께 삭제");
+  });
+
+  it("확정 후 이유 없이 배치된 작업을 삭제하지 않는다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+      planStatus: "committed",
+    }));
+
+    store.getState().discardTask("task-1");
+
+    expect(store.getState().tasks).toHaveLength(1);
+    expect(store.getState().blocks).toHaveLength(1);
+    expect(store.getState().notice).toContain("변경 이유");
+  });
+
+  it("확정 후 이유를 입력하면 작업과 타임블록을 함께 삭제한다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+      planStatus: "committed",
+    }));
+
+    store.getState().discardTask("task-1", "오늘 우선순위에서 제외함");
+
+    expect(store.getState().tasks).toHaveLength(0);
+    expect(store.getState().blocks).toHaveLength(0);
+  });
+
+  it("일과 완료 후에는 배치된 작업과 기록을 보존한다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+      planStatus: "closed",
+    }));
+
+    store.getState().discardTask("task-1");
+
+    expect(store.getState().tasks).toHaveLength(1);
+    expect(store.getState().blocks).toHaveLength(1);
+  });
+});
+
 describe("하루 시작 시간", () => {
   it("마이페이지에서 선택한 기상 시간을 상태에 저장한다", () => {
     const store = createPlannerStore(seed());

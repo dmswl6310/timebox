@@ -6,6 +6,7 @@ import {
   useDraggable,
   useDroppable,
   type DragEndEvent,
+  type DragStartEvent,
 } from "@dnd-kit/react";
 import {
   BarChart3,
@@ -67,6 +68,7 @@ function moodEmoji(value: number | null | undefined) {
 
 type Page = "today" | "journal" | "records";
 type ServiceMode = "professional" | "paper";
+type TimeGridResolution = 15 | 30;
 type RecordTab = "summary" | "activity";
 type Period = "today" | "week" | "month" | "year" | "all";
 type ShareLinkSummary = {
@@ -101,6 +103,8 @@ async function reasonForChange(
 
 const MODE_STORAGE_KEY = "timebox-service-mode";
 const MODE_CHANGE_EVENT = "timebox-service-mode-change";
+const GRID_RESOLUTION_STORAGE_KEY = "timebox-grid-resolution";
+const GRID_RESOLUTION_CHANGE_EVENT = "timebox-grid-resolution-change";
 
 function subscribeServiceMode(callback: () => void) {
   window.addEventListener("storage", callback);
@@ -113,6 +117,19 @@ function subscribeServiceMode(callback: () => void) {
 
 function getServiceModeSnapshot(): ServiceMode {
   return window.localStorage.getItem(MODE_STORAGE_KEY) === "professional" ? "professional" : "paper";
+}
+
+function subscribeGridResolution(callback: () => void) {
+  window.addEventListener("storage", callback);
+  window.addEventListener(GRID_RESOLUTION_CHANGE_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener(GRID_RESOLUTION_CHANGE_EVENT, callback);
+  };
+}
+
+function getGridResolutionSnapshot(): TimeGridResolution {
+  return window.localStorage.getItem(GRID_RESOLUTION_STORAGE_KEY) === "15" ? 15 : 30;
 }
 
 function formatTime(totalMinutes: number) {
@@ -297,9 +314,9 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
       <button className="note-star" data-active={task.isMit} onClick={() => toggleMit(task.id)} aria-label="선택한 날짜의 우선순위 전환">
         <Star size={15} fill={task.isMit ? "currentColor" : "none"} />
       </button>
-      <button className="note-task-copy" onClick={addToSchedule} title={scheduled ? "이미 시간표에 배치됨" : planStatus === "closed" ? "이전 방식으로 잠긴 일정입니다" : planStatus === "committed" && !isPlanEditing ? "계획 변경 모드에서 배치할 수 있어요" : "빈 시간에 배치"} disabled={scheduled || planStatus === "closed" || (planStatus === "committed" && !isPlanEditing)}>
+      <button className="note-task-copy" onClick={addToSchedule} title={scheduled ? "시간표에 배치된 작업" : planStatus === "closed" ? "이전 방식으로 잠긴 일정입니다" : planStatus === "committed" && !isPlanEditing ? "계획 변경 모드에서 배치할 수 있어요" : "빈 시간에 배치"} disabled={scheduled || planStatus === "closed" || (planStatus === "committed" && !isPlanEditing)}>
         <strong>{task.title}</strong>
-        <span><Tag size={11} /> {task.tag} · {task.estimate}분{scheduled && <em>시간표에 배치됨</em>}</span>
+        <span><Tag size={11} /> {task.tag} · {task.estimate}분{scheduled && <CheckCircle2 className="note-scheduled-mark" size={13} aria-label="시간표에 배치됨" />}</span>
       </button>
       <button className="icon-only note-edit" onClick={beginEditing} aria-label="할 일 수정"><Pencil size={14} /></button>
       {!priority && <button type="button" className="icon-only note-delete" onClick={deleteTask} aria-label={scheduled ? `${task.title} 할 일과 일정 함께 삭제` : `${task.title} 휴지통으로 이동`} title={scheduled ? "할 일과 연결된 타임블록 함께 삭제" : "할 일 삭제"}><Trash2 size={14} /></button>}
@@ -549,7 +566,7 @@ function SelectedBlockBar() {
   );
 }
 
-function Timetable({ resolution }: { resolution: 15 | 30 }) {
+function Timetable({ resolution }: { resolution: TimeGridResolution }) {
   const blocks = usePlannerStore((state) => state.blocks);
   const dayStartHour = usePlannerStore((state) => state.dayStartHour);
   const earliestBlockHour = blocks.length ? Math.floor(Math.min(...blocks.map((block) => block.start)) / 60) : dayStartHour;
@@ -582,7 +599,7 @@ function Timetable({ resolution }: { resolution: 15 | 30 }) {
   );
 }
 
-function TodayView({ todayLabel }: { todayLabel: string }) {
+function TodayView({ todayLabel, resolution }: { todayLabel: string; resolution: TimeGridResolution }) {
   const router = useRouter();
   const userId = usePlannerStore((state) => state.userId);
   const planDate = usePlannerStore((state) => state.planDate);
@@ -594,7 +611,6 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
   const beginPlanEdit = usePlannerStore((state) => state.beginPlanEdit);
   const finishPlanEdit = usePlannerStore((state) => state.finishPlanEdit);
   const requestChangeReason = useChangeReason();
-  const [resolution, setResolution] = useState<15 | 30>(30);
   const [notesOpen, setNotesOpen] = useState(true);
   const planned = blocks.reduce((sum, block) => sum + block.duration, 0);
   const today = dateInTimeZone();
@@ -632,7 +648,6 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
         </div>
         <div className="planner-heading-actions">
           <button className="notes-toggle" onClick={() => setNotesOpen((open) => !open)}>{notesOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}{notesOpen ? "할 일 숨기기" : "할 일 보기"}</button>
-          <div className="resolution-switch"><span>눈금</span><button data-active={resolution === 30} onClick={() => setResolution(30)}>30분</button><button data-active={resolution === 15} onClick={() => setResolution(15)}>15분</button></div>
           {planStatus === "draft" ? (
             <button className="confirm-plan" onClick={confirmPlan}>계획 확정하기</button>
           ) : planStatus === "closed" ? (
@@ -852,10 +867,12 @@ function ProfilePanel({
   tags,
   mode,
   dayStartHour,
+  gridResolution,
   onClose,
   onAddTag,
   onModeChange,
   onDayStartHourChange,
+  onGridResolutionChange,
   onSignOut,
 }: {
   open: boolean;
@@ -864,10 +881,12 @@ function ProfilePanel({
   tags: string[];
   mode: ServiceMode;
   dayStartHour: number;
+  gridResolution: TimeGridResolution;
   onClose: () => void;
   onAddTag: (name: string) => void;
   onModeChange: (mode: ServiceMode) => void;
   onDayStartHourChange: (hour: number) => void;
+  onGridResolutionChange: (resolution: TimeGridResolution) => void;
   onSignOut: () => void;
 }) {
   const [tagName, setTagName] = useState("");
@@ -914,6 +933,13 @@ function ProfilePanel({
                 {DAY_START_OPTIONS.map((hour) => <option key={hour} value={hour}>오전 {hour}시</option>)}
               </select>
             </label>
+          </section>
+          <section className="profile-section">
+            <div><CalendarDays size={15} /><div><strong>시간표 눈금</strong><small>데일리 플래너에는 선택 버튼을 두지 않고, 여기서 정한 간격으로 보여줘요.</small></div></div>
+            <div className="profile-resolution-switch" aria-label="시간표 눈금 선택">
+              <button data-active={gridResolution === 30} onClick={() => onGridResolutionChange(30)}>30분 간격</button>
+              <button data-active={gridResolution === 15} onClick={() => onGridResolutionChange(15)}>15분 간격</button>
+            </div>
           </section>
         </div>
         <footer><button className="profile-signout" onClick={onSignOut}><LogOut size={15} />{demo ? "로그인 화면으로" : "로그아웃"}</button></footer>
@@ -1194,6 +1220,8 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   const isPlanEditing = usePlannerStore((state) => state.isPlanEditing);
   const [page, setPage] = useState<Page>(initialPage);
   const serviceMode = useSyncExternalStore(subscribeServiceMode, getServiceModeSnapshot, () => "paper" as ServiceMode);
+  const gridResolution = useSyncExternalStore(subscribeGridResolution, getGridResolutionSnapshot, () => 30 as TimeGridResolution);
+  const [draggingBlock, setDraggingBlock] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
   const [profilePanelOpen, setProfilePanelOpen] = useState(false);
@@ -1231,7 +1259,17 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
     window.dispatchEvent(new Event(MODE_CHANGE_EVENT));
   };
 
+  const changeGridResolution = (resolution: TimeGridResolution) => {
+    window.localStorage.setItem(GRID_RESOLUTION_STORAGE_KEY, String(resolution));
+    window.dispatchEvent(new Event(GRID_RESOLUTION_CHANGE_EVENT));
+  };
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setDraggingBlock(event.operation.source?.data.kind === "block");
+  };
+
   const handleDragEnd = async (event: DragEndEvent) => {
+    setDraggingBlock(false);
     if (event.canceled) return;
     if (planStatus === "committed" && !isPlanEditing) return;
     const source = event.operation.source;
@@ -1408,8 +1446,8 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
 
   return (
     <ChangeReasonContext.Provider value={requestChangeReason}>
-    <DragDropProvider onDragEnd={handleDragEnd}>
-      <div className="paper-app" data-mode={serviceMode}>
+    <DragDropProvider onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <div className="paper-app" data-mode={serviceMode} data-block-dragging={draggingBlock}>
         <header className="paper-topbar">
           <Logo />
           <AppNav page={page} setPage={openPage} />
@@ -1421,14 +1459,15 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
             <button onClick={openShareManager}><Copy size={15} /><span>공유</span></button><button className="paper-avatar" onClick={() => setProfilePanelOpen(true)} title="마이페이지" aria-label="마이페이지 열기">{userEmail?.slice(0, 1).toUpperCase() ?? (userId ? "나" : "D")}</button>
           </div>
         </header>
-        {page === "today" && <TodayView todayLabel={todayLabel} />}
+        {page === "today" && <TodayView todayLabel={todayLabel} resolution={gridResolution} />}
         {page === "journal" && <JournalView />}
         {page === "records" && <RecordsView onOpenRecord={openRecord} />}
         <AppNav page={page} setPage={openPage} />
         <ShareManager open={sharePanelOpen} loading={shareLinksLoading} creating={sharing} revokingId={revokingShareId} now={shareManagerNow} demo={!userId} error={shareError} shares={shareLinks} onClose={() => setSharePanelOpen(false)} onCreate={shareSchedule} onRevoke={revokeShare} />
-        <ProfilePanel open={profilePanelOpen} email={userEmail} demo={!userId} tags={availableTags} mode={serviceMode} dayStartHour={dayStartHour} onClose={() => setProfilePanelOpen(false)} onAddTag={addTag} onModeChange={changeServiceMode} onDayStartHourChange={setDayStartHour} onSignOut={signOut} />
+        <ProfilePanel open={profilePanelOpen} email={userEmail} demo={!userId} tags={availableTags} mode={serviceMode} dayStartHour={dayStartHour} gridResolution={gridResolution} onClose={() => setProfilePanelOpen(false)} onAddTag={addTag} onModeChange={changeServiceMode} onDayStartHourChange={setDayStartHour} onGridResolutionChange={changeGridResolution} onSignOut={signOut} />
         {reasonPrompt && <ChangeReasonDialog title={reasonPrompt.title} description={reasonPrompt.description} value={reasonText} onChange={setReasonText} onCancel={() => finishReasonPrompt(null)} onSubmit={() => finishReasonPrompt(reasonText)} />}
         {notice && <div className="toast" role="status"><CheckCircle2 size={17} /> {notice}<button onClick={() => setNotice(null)} aria-label="알림 닫기"><X size={15} /></button></div>}
+        {draggingBlock && <div className="schedule-delete-guide" role="status" aria-live="polite"><Trash2 size={20} /><div><strong>일정표 밖에 놓으면 삭제</strong><span>할 일은 브레인덤프에 그대로 남아요</span></div></div>}
         <DragOverlay className="drag-overlay" dropAnimation={null}>{(source) => <div className="drag-preview"><GripVertical size={15} /><span>{String(source.data.title ?? "타임블록")}</span></div>}</DragOverlay>
       </div>
     </DragDropProvider>

@@ -431,19 +431,6 @@ describe("계획 상태 규칙", () => {
     expect(store.getState().isPlanEditing).toBe(false);
   });
 
-  it("변경 모드 중에는 일과 완료를 막는다", () => {
-    const store = createPlannerStore(seed({
-      blocks: [block("block-1", "task-1", 9 * 60)],
-      planStatus: "committed",
-    }));
-
-    store.getState().beginPlanEdit();
-    store.getState().closePlan();
-
-    expect(store.getState().planStatus).toBe("committed");
-    expect(store.getState().notice).toContain("변경 확정");
-  });
-
   it("일과 완료 후에는 일정 삭제를 막는다", () => {
     const store = createPlannerStore(seed({
       blocks: [block("block-1", "task-1", 9 * 60)],

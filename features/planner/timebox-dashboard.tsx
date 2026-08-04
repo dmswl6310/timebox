@@ -53,7 +53,17 @@ import type { TagName, Task, TimeBlock } from "./types";
 
 const ESTIMATE_OPTIONS = [15, 30, 45, 60, 90, 120, 180] as const;
 const DAY_START_OPTIONS = [5, 6, 7, 8, 9, 10, 11, 12] as const;
-const MOODS = ["매우 힘듦", "힘듦", "보통", "좋음", "아주 좋음"];
+const MOODS = [
+  { label: "매우 힘듦", emoji: "😞" },
+  { label: "힘듦", emoji: "😕" },
+  { label: "보통", emoji: "😐" },
+  { label: "좋음", emoji: "🙂" },
+  { label: "아주 좋음", emoji: "😄" },
+];
+
+function moodEmoji(value: number | null | undefined) {
+  return value ? MOODS[value - 1]?.emoji ?? "" : "";
+}
 
 type Page = "today" | "journal" | "records";
 type ServiceMode = "professional" | "paper";
@@ -287,7 +297,7 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
       <button className="note-star" data-active={task.isMit} onClick={() => toggleMit(task.id)} aria-label="선택한 날짜의 우선순위 전환">
         <Star size={15} fill={task.isMit ? "currentColor" : "none"} />
       </button>
-      <button className="note-task-copy" onClick={addToSchedule} title={scheduled ? "이미 시간표에 배치됨" : planStatus === "closed" ? "일과 기록을 완료한 일정입니다" : planStatus === "committed" && !isPlanEditing ? "계획 변경 모드에서 배치할 수 있어요" : "빈 시간에 배치"} disabled={scheduled || planStatus === "closed" || (planStatus === "committed" && !isPlanEditing)}>
+      <button className="note-task-copy" onClick={addToSchedule} title={scheduled ? "이미 시간표에 배치됨" : planStatus === "closed" ? "이전 방식으로 잠긴 일정입니다" : planStatus === "committed" && !isPlanEditing ? "계획 변경 모드에서 배치할 수 있어요" : "빈 시간에 배치"} disabled={scheduled || planStatus === "closed" || (planStatus === "committed" && !isPlanEditing)}>
         <strong>{task.title}</strong>
         <span><Tag size={11} /> {task.tag} · {task.estimate}분{scheduled && <em>시간표에 배치됨</em>}</span>
       </button>
@@ -516,7 +526,7 @@ function SelectedBlockBar() {
       <div className="selected-block-summary"><strong>{selected.title}</strong><span>{formatTime(selected.start)}–{formatTime(selected.start + selected.duration)}</span></div>
       {changed && <span className="change-pill">변경됨</span>}
       {planStatus === "closed" ? (
-        <span className="closed-pill"><CheckCircle2 size={13} /> 일과 기록 완료</span>
+        <span className="closed-pill"><CheckCircle2 size={13} /> 이전 일정 · 수정 잠김</span>
       ) : (
         <>
           <button className="complete-action" data-completed={selected.status === "completed"} onClick={() => toggleBlockComplete(selected.id)}><Check size={15} /> {selected.status === "completed" ? "완료됨" : "완료"}</button>
@@ -583,13 +593,11 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
   const confirmPlan = usePlannerStore((state) => state.confirmPlan);
   const beginPlanEdit = usePlannerStore((state) => state.beginPlanEdit);
   const finishPlanEdit = usePlannerStore((state) => state.finishPlanEdit);
-  const closePlan = usePlannerStore((state) => state.closePlan);
   const requestChangeReason = useChangeReason();
   const [resolution, setResolution] = useState<15 | 30>(30);
   const [notesOpen, setNotesOpen] = useState(true);
   const planned = blocks.reduce((sum, block) => sum + block.duration, 0);
   const today = dateInTimeZone();
-  const isFuturePlan = planDate > today;
   const openDate = (offset: number) => {
     router.push(`/?date=${shiftIsoDate(planDate, offset)}`);
   };
@@ -628,16 +636,11 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
           {planStatus === "draft" ? (
             <button className="confirm-plan" onClick={confirmPlan}>계획 확정하기</button>
           ) : planStatus === "closed" ? (
-            <button className="close-day" data-closed="true" disabled><CheckCircle2 size={15} /> 일과 기록 완료</button>
+            <span className="closed-pill"><CheckCircle2 size={13} /> 이전 방식으로 완료된 일정</span>
           ) : (
-            <>
-              <button className="plan-edit-toggle" data-editing={isPlanEditing} onClick={isPlanEditing ? confirmPlanChanges : beginPlanEdit}>
-                {isPlanEditing ? <Check size={15} /> : <Pencil size={14} />} {isPlanEditing ? "변경 확정" : "계획 변경"}
-              </button>
-              <button className="close-day" data-future={isFuturePlan} onClick={closePlan} disabled={isFuturePlan || isPlanEditing} title={isPlanEditing ? "먼저 변경을 확정해 주세요." : isFuturePlan ? "해당 날짜가 되면 일과를 완료할 수 있어요." : undefined}>
-                <CheckCircle2 size={15} /> {isFuturePlan ? "해당 날짜에 완료" : "일과 완료"}
-              </button>
-            </>
+            <button className="plan-edit-toggle" data-editing={isPlanEditing} onClick={isPlanEditing ? confirmPlanChanges : beginPlanEdit}>
+              {isPlanEditing ? <Check size={15} /> : <Pencil size={14} />} {isPlanEditing ? "변경 확정" : "계획 변경"}
+            </button>
           )}
         </div>
       </div>
@@ -646,27 +649,24 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
         {notesOpen && <aside className="paper-notes"><PrioritySection /><BrainDumpSection /></aside>}
         <Timetable resolution={resolution} />
       </div>
-      <p className="planner-help">미래 날짜도 미리 계획할 수 있어요. ‘일과 완료’를 누르면 확정 계획과 최종 일정의 차이만 기록됩니다.</p>
+      <p className="planner-help">미래 날짜도 미리 계획할 수 있어요. 확정 뒤 바뀐 내용은 ‘변경 확정’할 때 회고용 기록으로 정리됩니다.</p>
     </main>
   );
 }
 
-function JournalView({ onOpenRecords }: { onOpenRecords: () => void }) {
+function JournalView() {
   const journal = usePlannerStore((state) => state.journal);
   const mood = usePlannerStore((state) => state.mood);
   const planDate = usePlannerStore((state) => state.planDate);
   const setJournal = usePlannerStore((state) => state.setJournal);
   const setMood = usePlannerStore((state) => state.setMood);
   const saveJournal = usePlannerStore((state) => state.saveJournal);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const first = useRef(true);
 
   useEffect(() => {
     if (first.current) { first.current = false; return; }
-    setSaveState("saving");
     const timeout = window.setTimeout(() => {
-      saveJournal(true);
-      setSaveState("saved");
+      saveJournal();
     }, 900);
     return () => window.clearTimeout(timeout);
   }, [journal, mood, saveJournal]);
@@ -677,19 +677,18 @@ function JournalView({ onOpenRecords }: { onOpenRecords: () => void }) {
     <main className="journal-page">
       <div className="journal-topline">
         <div><p>DAILY JOURNAL</p><h1>{dateLabel(planDate)}</h1></div>
-        <div className="journal-save-state"><Save size={14} /> {saveState === "saving" ? "저장 중…" : saveState === "saved" ? "자동 저장됨" : "입력하면 자동 저장"}</div>
       </div>
       <div className="journal-sheet">
         <div className="mood-row" aria-label="오늘의 기분">
           <span>오늘의 기분</span>
-          {MOODS.map((label, index) => <button key={label} title={label} data-active={mood === index + 1} onClick={() => setMood(index + 1)}>{index + 1}</button>)}
+          {MOODS.map(({ label, emoji }, index) => <button key={label} title={label} aria-label={label} data-active={mood === index + 1} onClick={() => setMood(index + 1)}>{emoji}</button>)}
         </div>
         <div className="journal-prompts">
           <span>막막하면 한 줄부터</span>
-          {["오늘 잘한 일", "방해받은 순간", "내일의 아주 작은 첫 행동"].map((prompt) => <button key={prompt} onClick={() => insertPrompt(prompt)}>{prompt}</button>)}
+          {["오늘 잘한 일", "감사한 일", "기분이 좋았던 순간", "몰입했던 순간"].map((prompt) => <button key={prompt} onClick={() => insertPrompt(prompt)}>{prompt}</button>)}
         </div>
-        <textarea value={journal} onChange={(event) => setJournal(event.target.value)} onBlur={() => saveJournal(true)} placeholder={"오늘은 어떤 하루였나요?\n계획과 달랐던 순간, 느낀 감정, 내일 기억하고 싶은 것을 자유롭게 적어보세요."} aria-label="오늘의 일기" />
-        <footer><span>{journal.trim().length}자</span><button onClick={() => saveJournal(false)}><Save size={15} /> 지금 저장</button><button onClick={onOpenRecords}><Search size={15} /> 지난 일기 찾기</button></footer>
+        <textarea value={journal} onChange={(event) => setJournal(event.target.value)} onBlur={saveJournal} placeholder={"오늘은 어떤 하루였나요?\n계획과 달랐던 순간, 느낀 감정, 내일 기억하고 싶은 것을 자유롭게 적어보세요."} aria-label="오늘의 일기" />
+        <footer><span>{journal.trim().length}자</span></footer>
       </div>
     </main>
   );
@@ -701,8 +700,7 @@ function cutoffFor(period: "week" | "year", today: string) {
 
 function activityIcon(kind: ActivityKind) {
   if (kind === "journal") return <BookOpenText size={15} />;
-  if (kind === "schedule") return <History size={15} />;
-  if (kind === "plan") return <CalendarDays size={15} />;
+  if (kind === "schedule" || kind === "change") return <History size={15} />;
   return <CheckCircle2 size={15} />;
 }
 
@@ -732,7 +730,7 @@ function MonthHistory({
               <time>{Number(date.slice(-2))}</time>
               <strong>{completion}%</strong>
               <i><span style={{ width: `${completion}%` }} /></i>
-              <small>{day.journal.trim() && <BookOpenText size={10} />}{day.mood ? <b>{day.mood}</b> : null}</small>
+              <small>{day.journal.trim() && <BookOpenText size={10} />}{day.mood ? <b title={MOODS[day.mood - 1]?.label}>{moodEmoji(day.mood)}</b> : null}</small>
             </button>
           );
         })}
@@ -763,7 +761,7 @@ function ChangeReasonDialog({
         <form onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
           <label htmlFor="change-reason">변경 이유</label>
           <textarea id="change-reason" value={value} onChange={(event) => onChange(event.target.value)} maxLength={500} autoFocus placeholder="예: 예상보다 자료 검토가 더 필요해서 시간을 늘렸어요." />
-          <small>{value.length}/500 · 이 이유는 일과 완료 후 최종 변경 내역과 함께 저장돼요.</small>
+          <small>{value.length}/500 · 변경을 확정하면 최초 계획과 달라진 내용에 함께 기록돼요.</small>
           <div><button type="button" className="reason-cancel" onClick={onCancel}>취소</button><button type="submit" className="reason-submit" disabled={!value.trim()}>이유 저장하고 변경</button></div>
         </form>
       </section>
@@ -915,6 +913,14 @@ function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journ
       });
     }
   }
+  const changedBlocks = blocks.filter((block) => block.baselineStart !== undefined && (block.start !== block.baselineStart || block.duration !== block.baselineDuration));
+  const changeLines = changedBlocks.map((block) => {
+    const details: string[] = [];
+    if (block.baselineStart !== block.start) details.push(`시간 ${formatTime(block.baselineStart ?? block.start)} → ${formatTime(block.start)}`);
+    if (block.baselineDuration !== block.duration) details.push(`길이 ${block.baselineDuration ?? block.duration}분 → ${block.duration}분`);
+    return `• ${block.title} · ${details.join(" · ")}`;
+  });
+  const changeReason = changedBlocks.flatMap((block) => Object.values(block.changeReasons ?? {})).find(Boolean);
   return {
     days: [{
       date: planDate,
@@ -928,14 +934,14 @@ function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journ
     }],
     tagMinutes: [...tagMinutes].map(([tag, minutes]) => ({ tag, date: planDate, ...minutes })),
     activities: [
-      ...blocks.filter((block) => block.changeReasons && block.baselineStart !== undefined && (block.start !== block.baselineStart || block.duration !== block.baselineDuration)).map((block) => ({
-        id: `demo-change-${block.id}`,
+      ...(changeLines.length ? [{
+        id: "demo-change-group",
         occurredAt: `${planDate}T23:00:00+09:00`,
         date: planDate,
-        kind: "schedule" as const,
-        title: block.title,
-        detail: `확정 후 최종 변경 · ${block.baselineStart !== block.start ? `${formatTime(block.baselineStart ?? block.start)} → ${formatTime(block.start)} · 이유: ${block.changeReasons?.moved ?? "미기록"}` : ""}${block.baselineStart !== block.start && block.baselineDuration !== block.duration ? " · " : ""}${block.baselineDuration !== block.duration ? `${block.baselineDuration ?? block.duration}분 → ${block.duration}분 · 이유: ${block.changeReasons?.resized ?? "미기록"}` : ""}`,
-      })),
+        kind: "change" as const,
+        title: `계획에서 달라진 내용 ${changeLines.length}개`,
+        detail: `${changeReason ? `변경 이유 · ${changeReason}` : "변경 이유가 기록되지 않았어요."}\n${changeLines.join("\n")}`,
+      }] : []),
       ...blocks.map((block) => ({
         id: `demo-block-${block.id}`,
         occurredAt: `${planDate}T${formatTime(block.start)}:00+09:00`,
@@ -950,20 +956,14 @@ function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journ
   };
 }
 
-function RecordsView({
-  initialJournalSearch = false,
-  onOpenRecord,
-}: {
-  initialJournalSearch?: boolean;
-  onOpenRecord: (date: string, destination: "today" | "journal") => void;
-}) {
+function RecordsView({ onOpenRecord }: { onOpenRecord: (date: string, destination: "today" | "journal") => void }) {
   const userId = usePlannerStore((state) => state.userId);
   const planDate = usePlannerStore((state) => state.planDate);
   const tasks = usePlannerStore((state) => state.tasks);
   const blocks = usePlannerStore((state) => state.blocks);
   const journal = usePlannerStore((state) => state.journal);
   const mood = usePlannerStore((state) => state.mood);
-  const [tab, setTab] = useState<RecordTab>(initialJournalSearch ? "activity" : "summary");
+  const [tab, setTab] = useState<RecordTab>("summary");
   const [period, setPeriod] = useState<Period>("month");
   const today = dateInTimeZone();
   const currentMonth = today.slice(0, 7);
@@ -974,7 +974,7 @@ function RecordsView({
   const [weeklyGoalLoading, setWeeklyGoalLoading] = useState(Boolean(userId));
   const [weeklyGoalSaving, setWeeklyGoalSaving] = useState(false);
   const [weeklyGoalMessage, setWeeklyGoalMessage] = useState("");
-  const [query, setQuery] = useState(initialJournalSearch ? "일기" : "");
+  const [query, setQuery] = useState("");
   const [bundle, setBundle] = useState<RecordBundle>(() => demoRecords(planDate, tasks, blocks, journal, mood));
   const [loading, setLoading] = useState(Boolean(userId));
   const [error, setError] = useState("");
@@ -1029,6 +1029,7 @@ function RecordsView({
   const activities = bundle.activities.filter((activity) => isInPeriod(activity.date));
   const normalizedQuery = query.trim().toLocaleLowerCase("ko");
   const matches = (normalizedQuery ? bundle.activities : activities).filter((activity) => !normalizedQuery || `${activity.title} ${activity.detail} ${activity.date}`.toLocaleLowerCase("ko").includes(normalizedQuery));
+  const changeActivities = activities.filter((activity) => activity.kind === "change");
   const planned = days.reduce((sum, day) => sum + day.plannedMinutes, 0);
   const actual = days.reduce((sum, day) => sum + day.actualMinutes, 0);
   const complete = days.reduce((sum, day) => sum + day.completedBlocks, 0);
@@ -1131,7 +1132,13 @@ function RecordsView({
       )}
 
       {!query.trim() && tab === "activity" && (
-        <section className="activity-feed">{matches.length ? matches.map((activity, index) => <article key={activity.id}><div className="activity-date">{index === 0 || matches[index - 1].date !== activity.date ? dateLabel(activity.date) : ""}</div><span className="activity-icon" data-kind={activity.kind}>{activityIcon(activity.kind)}</span><div><time>{new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(new Date(activity.occurredAt))}</time><strong>{activity.title}</strong><p>{activity.detail}</p><button className="record-open" onClick={() => onOpenRecord(activity.date, activity.kind === "journal" ? "journal" : "today")}>{activity.kind === "journal" ? "이 일기 열기" : "이날 일정 열기"}<ChevronRight size={13} /></button></div></article>) : <p className="no-records">선택한 기간에 활동 기록이 없어요.</p>}</section>
+        <section className="activity-feed change-feed">
+          <header><div><History size={16} /><strong>최초 계획에서 달라진 내용</strong></div><p>확정 전 작성 과정은 제외하고, 변경 모드에서 확정한 차이와 이유만 보여줘요.</p></header>
+          {changeActivities.length ? changeActivities.map((activity, index) => {
+            const [reason, ...changeLines] = activity.detail.split("\n");
+            return <article key={activity.id}><div className="activity-date">{index === 0 || changeActivities[index - 1].date !== activity.date ? dateLabel(activity.date) : ""}</div><span className="activity-icon" data-kind={activity.kind}>{activityIcon(activity.kind)}</span><div><time>{new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(new Date(activity.occurredAt))}</time><strong>{activity.title}</strong><div className="change-reason"><span>왜 바뀌었나요</span><p>{reason.replace(/^변경 이유 · /, "")}</p></div><ul className="change-lines">{changeLines.map((line) => <li key={line}>{line.replace(/^•\s*/, "")}</li>)}</ul><button className="record-open" onClick={() => onOpenRecord(activity.date, "today")}>이날 일정 열기<ChevronRight size={13} /></button></div></article>;
+          }) : <p className="no-records">선택한 기간에는 확정 후 변경한 일정이 없어요.</p>}
+        </section>
       )}
     </main>
   );
@@ -1166,7 +1173,6 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   const isPlanEditing = usePlannerStore((state) => state.isPlanEditing);
   const [page, setPage] = useState<Page>(initialPage);
   const serviceMode = useSyncExternalStore(subscribeServiceMode, getServiceModeSnapshot, () => "paper" as ServiceMode);
-  const [recordsIntent, setRecordsIntent] = useState<"all" | "journal">("all");
   const [sharing, setSharing] = useState(false);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
   const [profilePanelOpen, setProfilePanelOpen] = useState(false);
@@ -1189,7 +1195,6 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
     prompt.resolve(reason?.trim() || null);
   };
   const openPage = (nextPage: Page) => {
-    if (nextPage === "records") setRecordsIntent("all");
     setPage(nextPage);
   };
 
@@ -1396,8 +1401,8 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
           </div>
         </header>
         {page === "today" && <TodayView todayLabel={todayLabel} />}
-        {page === "journal" && <JournalView onOpenRecords={() => { setRecordsIntent("journal"); setPage("records"); }} />}
-        {page === "records" && <RecordsView initialJournalSearch={recordsIntent === "journal"} onOpenRecord={openRecord} />}
+        {page === "journal" && <JournalView />}
+        {page === "records" && <RecordsView onOpenRecord={openRecord} />}
         <AppNav page={page} setPage={openPage} />
         <ShareManager open={sharePanelOpen} loading={shareLinksLoading} creating={sharing} revokingId={revokingShareId} now={shareManagerNow} demo={!userId} error={shareError} shares={shareLinks} onClose={() => setSharePanelOpen(false)} onCreate={shareSchedule} onRevoke={revokeShare} />
         <ProfilePanel open={profilePanelOpen} email={userEmail} demo={!userId} tags={availableTags} mode={serviceMode} dayStartHour={dayStartHour} onClose={() => setProfilePanelOpen(false)} onAddTag={addTag} onModeChange={changeServiceMode} onDayStartHourChange={setDayStartHour} onSignOut={signOut} />

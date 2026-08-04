@@ -11,7 +11,7 @@ import {
   persistBlockCreate,
   persistBlockMove,
   persistDayStartHour,
-  persistPlanClose,
+  persistPlanChangeSnapshot,
   persistPlanCommit,
   persistPriorities,
   persistReflection,
@@ -100,11 +100,10 @@ export type PlannerState = PlannerSeed & {
   setMobileView: (view: MobileView) => void;
   setJournal: (value: string) => void;
   setMood: (value: number) => void;
-  saveJournal: (silent?: boolean) => void;
+  saveJournal: () => void;
   confirmPlan: () => void;
   beginPlanEdit: () => void;
   finishPlanEdit: (reason?: string) => boolean;
-  closePlan: () => void;
   setNotice: (value: string | null) => void;
 };
 
@@ -165,15 +164,11 @@ export function createPlannerStore(seed: PlannerSeed) {
         timezone: state.timezone,
       };
     };
-    const pendingWrites = new Set<Promise<void>>();
     let writeQueue = Promise.resolve();
     const save = (operation: () => Promise<void>) => {
-      const pending = writeQueue
+      writeQueue = writeQueue
         .then(operation)
-        .catch(() => set({ notice: "저장하지 못했어요. 연결을 확인해 주세요." }))
-        .finally(() => pendingWrites.delete(pending));
-      writeQueue = pending;
-      pendingWrites.add(pending);
+        .catch(() => set({ notice: "저장하지 못했어요. 연결을 확인해 주세요." }));
     };
 
     return {
@@ -454,7 +449,7 @@ export function createPlannerStore(seed: PlannerSeed) {
           blocks,
           selectedBlockId: blocks[0]?.id ?? null,
           notice: isCommittedChange
-            ? "시간표에서 뺐어요. 일과를 완료하면 최종 차이에 반영돼요."
+            ? "시간표에서 뺐어요. ‘변경 확정’을 누르면 최종 차이에 반영돼요."
             : block.taskId
               ? "시간표에서 뺐어요. 작업은 브레인덤프에 남아 있어요."
               : "타임블록을 삭제했어요.",
@@ -569,11 +564,10 @@ export function createPlannerStore(seed: PlannerSeed) {
       setMobileView: (mobileView) => set({ mobileView }),
       setJournal: (journal) => set({ journal }),
       setMood: (mood) => set({ mood }),
-      saveJournal: (silent = false) => {
+      saveJournal: () => {
         const state = get();
         const ctx = context();
         if (ctx) save(() => persistReflection(ctx, state.journal, state.mood));
-        if (!silent) set({ notice: "오늘의 기록을 저장했어요." });
       },
       confirmPlan: () => {
         const state = get();
@@ -652,46 +646,9 @@ export function createPlannerStore(seed: PlannerSeed) {
           for (const cancelled of cancelledBlocks) {
             save(() => persistBlockCancel(ctx, cancelled.id, cancelled.changeReasons));
           }
+          save(() => persistPlanChangeSnapshot(ctx).then(() => undefined));
         }
         return true;
-      },
-      closePlan: () => {
-        const state = get();
-        if (state.planStatus === "draft") {
-          set({ notice: "먼저 선택한 날짜의 계획을 확정해 주세요." });
-          return;
-        }
-        if (state.planStatus === "closed") {
-          set({ notice: "이 날짜의 일과를 이미 완료했어요." });
-          return;
-        }
-        if (state.isPlanEditing) {
-          set({ notice: "먼저 변경 이유를 남기고 ‘변경 확정’을 눌러 주세요." });
-          return;
-        }
-        if (state.planDate > dateInTimeZone(state.timezone)) {
-          set({ notice: "미래 계획은 해당 날짜가 된 뒤 일과 완료할 수 있어요." });
-          return;
-        }
-
-        const ctx = context();
-        set({ planStatus: "closed", notice: "최종 일정과 확정 계획을 비교하고 있어요." });
-        if (!ctx) {
-          set({ notice: "일과를 완료했어요. 최종 상태로 잠갔어요." });
-          return;
-        }
-
-        void Promise.all([...pendingWrites])
-          .then(() => persistPlanClose(ctx, state.blocks))
-          .then((changeCount) => set({
-            notice: changeCount > 0
-              ? `일과를 완료했어요. 최종 차이 ${changeCount}개를 기록했어요.`
-              : "일과를 완료했어요. 확정 계획과 최종 일정이 같아요.",
-          }))
-          .catch(() => set({
-            planStatus: "committed",
-            notice: "일과를 완료하지 못했어요. 연결을 확인하고 다시 시도해 주세요.",
-          }));
       },
       setNotice: (notice) => set({ notice }),
     };

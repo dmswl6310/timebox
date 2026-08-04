@@ -367,48 +367,83 @@ export async function persistPlanCommit(
   }));
 }
 
-export async function persistPlanClose(
-  context: PersistenceContext,
-  blocks: TimeBlock[],
-) {
+type PersistedBlockSnapshot = {
+  id: string;
+  title: string;
+  planned_start: string;
+  planned_end: string;
+  baseline_start: string | null;
+  baseline_end: string | null;
+  status: string;
+  change_reasons: Record<string, string> | null;
+};
+
+function minutesInPlanDay(iso: string, planDate: string, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(iso));
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+  const localDate = `${String(value("year")).padStart(4, "0")}-${String(value("month")).padStart(2, "0")}-${String(value("day")).padStart(2, "0")}`;
+  return value("hour") * 60 + value("minute") + (localDate > planDate ? 1440 : 0);
+}
+
+function snapshotState(block: PersistedBlockSnapshot, start: string, end: string, context: PersistenceContext) {
+  return {
+    title: block.title,
+    start: minutesInPlanDay(start, context.planDate, context.timezone),
+    duration: Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60_000),
+  };
+}
+
+/** 변경 확정 시 최초 확정본과 현재 일정의 최종 차이만 다시 만든다. */
+export async function persistPlanChangeSnapshot(context: PersistenceContext) {
   const supabase = createClient();
-  if (blocks.length) {
-    const { error: upsertError } = await supabase.from("time_blocks").upsert(
-      blocks.map((block) => {
-        const changeReasons = cleanChangeReasons(block.changeReasons);
-        return {
-          id: block.id,
-          user_id: context.userId,
-          daily_plan_id: context.dailyPlanId,
-          task_id: block.taskId ?? null,
-          kind: block.type,
-          title: block.title,
-          planned_start: toIso(context.planDate, block.start),
-          planned_end: toIso(context.planDate, block.start + block.duration),
-          status: dbStatus(block.status),
-          ...(changeReasons ? { change_reasons: changeReasons } : {}),
-        };
-      }),
-      { onConflict: "id" },
-    );
-    assertSuccess(upsertError);
-  }
-
-  let cancelQuery = supabase
+  const { data, error: readError } = await supabase
     .from("time_blocks")
-    .update({ status: "cancelled" })
+    .select("id,title,planned_start,planned_end,baseline_start,baseline_end,status,change_reasons")
     .eq("daily_plan_id", context.dailyPlanId)
-    .eq("user_id", context.userId)
-    .neq("status", "cancelled");
-  if (blocks.length) {
-    cancelQuery = cancelQuery.not("id", "in", `(${blocks.map((block) => block.id).join(",")})`);
-  }
-  const { error: cancelError } = await cancelQuery;
-  assertSuccess(cancelError);
+    .eq("user_id", context.userId);
+  assertSuccess(readError);
 
-  const { data, error } = await supabase.rpc("close_daily_plan", {
-    p_daily_plan_id: context.dailyPlanId,
-  });
-  assertSuccess(error);
-  return Number(data ?? 0);
+  const createdAt = new Date().toISOString();
+  const changes: Array<Record<string, unknown>> = [];
+  for (const block of (data ?? []) as PersistedBlockSnapshot[]) {
+    const reasons = block.change_reasons ?? {};
+    const current = snapshotState(block, block.planned_start, block.planned_end, context);
+    if (!block.baseline_start || !block.baseline_end) {
+      if (block.status !== "cancelled") {
+        changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "created", before_state: null, after_state: current, reason: cleanChangeReason(reasons.created), created_at: createdAt });
+      }
+      continue;
+    }
+
+    const baseline = snapshotState(block, block.baseline_start, block.baseline_end, context);
+    if (block.status === "cancelled") {
+      changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "cancelled", before_state: baseline, after_state: { status: "cancelled" }, reason: cleanChangeReason(reasons.cancelled), created_at: createdAt });
+      continue;
+    }
+    if (baseline.start !== current.start) {
+      changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "moved", before_state: baseline, after_state: current, reason: cleanChangeReason(reasons.moved), created_at: createdAt });
+    }
+    if (baseline.duration !== current.duration) {
+      changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "resized", before_state: baseline, after_state: current, reason: cleanChangeReason(reasons.resized), created_at: createdAt });
+    }
+  }
+
+  const { error: deleteError } = await supabase
+    .from("schedule_change_events")
+    .delete()
+    .eq("daily_plan_id", context.dailyPlanId)
+    .eq("user_id", context.userId);
+  assertSuccess(deleteError);
+  if (!changes.length) return 0;
+  const { error: insertError } = await supabase.from("schedule_change_events").insert(changes);
+  assertSuccess(insertError);
+  return changes.length;
 }

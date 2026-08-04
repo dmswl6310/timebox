@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { dateInTimeZone } from "@/lib/date";
 
-export type ActivityKind = "plan" | "task" | "schedule" | "journal";
+export type ActivityKind = "task" | "schedule" | "journal" | "change";
 
 export type ActivityRecord = {
   id: string;
@@ -48,7 +48,6 @@ type PlanRow = {
   plan_date: string;
   status: string;
   timezone: string;
-  committed_at: string | null;
 };
 
 type BlockRow = {
@@ -157,7 +156,7 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
   const plans = await fetchAllPages<PlanRow>(async (from, to) => queryPage<PlanRow>(
     await supabase
       .from("daily_plans")
-      .select("id,plan_date,status,timezone,committed_at")
+      .select("id,plan_date,status,timezone")
       .eq("user_id", userId)
       .order("plan_date", { ascending: false })
       .range(from, to),
@@ -165,11 +164,11 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
   if (!plans.length) return EMPTY_BUNDLE;
 
   const planIds = plans.map((plan) => plan.id);
-  const closedPlanIds = plans.filter((plan) => plan.status === "closed").map((plan) => plan.id);
+  const committedPlanIds = plans.filter((plan) => plan.status !== "draft").map((plan) => plan.id);
   const loadChanges = async () => {
-    if (!closedPlanIds.length) return [] as ChangeRow[];
+    if (!committedPlanIds.length) return [] as ChangeRow[];
     try {
-      return await fetchAllBatches<ChangeRow>(closedPlanIds, async (ids, from, to) => queryPage<ChangeRow>(await supabase
+      return await fetchAllBatches<ChangeRow>(committedPlanIds, async (ids, from, to) => queryPage<ChangeRow>(await supabase
         .from("schedule_change_events")
         .select("id,daily_plan_id,time_block_id,change_type,before_state,after_state,reason,created_at")
         .eq("user_id", userId)
@@ -179,7 +178,7 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (!message.includes("schedule_change_events.reason") && !message.includes("reason does not exist")) throw error;
-      const legacyRows = await fetchAllBatches<Omit<ChangeRow, "reason">>(closedPlanIds, async (ids, from, to) => queryPage<Omit<ChangeRow, "reason">>(await supabase
+      const legacyRows = await fetchAllBatches<Omit<ChangeRow, "reason">>(committedPlanIds, async (ids, from, to) => queryPage<Omit<ChangeRow, "reason">>(await supabase
         .from("schedule_change_events")
         .select("id,daily_plan_id,time_block_id,change_type,before_state,after_state,created_at")
         .eq("user_id", userId)
@@ -301,18 +300,6 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
   }
 
   const activities: ActivityRecord[] = [];
-  for (const plan of plans) {
-    if (!plan.committed_at) continue;
-    activities.push({
-      id: `plan-${plan.id}`,
-      occurredAt: plan.committed_at,
-      date: plan.plan_date,
-      kind: "plan",
-      title: "하루 계획 확정",
-      detail: "최초 일정표를 비교 기준으로 저장했어요.",
-    });
-  }
-
   for (const task of tasks) {
     activities.push({
       id: `task-created-${task.id}`,
@@ -376,6 +363,7 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
     reopened: "완료 취소",
     cancelled: "타임블록 삭제",
   };
+  const groupedChanges = new Map<string, { id: string; date: string; occurredAt: string; reason: string | null; lines: string[] }>();
   for (const change of changes) {
     const block = change.time_block_id ? blockById.get(change.time_block_id) : undefined;
     const date = planDateById.get(change.daily_plan_id) ?? localDate(change.created_at);
@@ -386,13 +374,20 @@ export async function loadRecordBundle(userId: string): Promise<RecordBundle> {
     if (before?.duration !== undefined && after?.duration !== undefined && before.duration !== after.duration) details.push(`${before.duration}분 → ${after.duration}분`);
     if (change.change_type === "created" && after?.start !== undefined) details.push(`${minuteOfDayLabel(after.start)} · ${after.duration ?? 0}분`);
     if (change.change_type === "cancelled" && before?.start !== undefined) details.push(`${minuteOfDayLabel(before.start)} · ${before.duration ?? 0}분`);
+    const reason = change.reason?.trim() || null;
+    const key = `${change.daily_plan_id}\u0000${change.created_at}\u0000${reason ?? ""}`;
+    const group = groupedChanges.get(key) ?? { id: change.id, date, occurredAt: change.created_at, reason, lines: [] };
+    group.lines.push(`${block?.title ?? before?.title ?? after?.title ?? "타임블록"} · ${changeLabels[change.change_type] ?? "일정 변경"}${details.length ? ` · ${details.join(" · ")}` : ""}`);
+    groupedChanges.set(key, group);
+  }
+  for (const group of groupedChanges.values()) {
     activities.push({
-      id: `change-${change.id}`,
-      occurredAt: change.created_at,
-      date,
-      kind: "schedule",
-      title: block?.title ?? before?.title ?? after?.title ?? "타임블록",
-      detail: `${changeLabels[change.change_type] ?? "일정 변경"}${details.length ? ` · ${details.join(" · ")}` : ""}${change.reason ? ` · 이유: ${change.reason}` : ""}`,
+      id: `change-group-${group.id}`,
+      occurredAt: group.occurredAt,
+      date: group.date,
+      kind: "change",
+      title: `계획에서 달라진 내용 ${group.lines.length}개`,
+      detail: `${group.reason ? `변경 이유 · ${group.reason}` : "변경 이유가 기록되지 않았어요."}\n${group.lines.map((line) => `• ${line}`).join("\n")}`,
     });
   }
 

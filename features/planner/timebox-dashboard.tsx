@@ -642,7 +642,6 @@ function TodayView({ todayLabel, resolution }: { todayLabel: string; resolution:
               <button onClick={() => openDate(1)} disabled={!userId} aria-label="다음 날짜"><ChevronRight size={16} /></button>
             </div>
             <span>{formatDuration(planned)} 계획됨</span>
-            {userId && planDate === today && <button className="today-jump" onClick={() => router.push(`/?date=${shiftIsoDate(today, 1)}`)}>내일 계획</button>}
             {userId && planDate !== today && <button className="today-jump" onClick={() => router.push("/")}>오늘</button>}
           </div>
         </div>

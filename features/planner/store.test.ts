@@ -219,7 +219,7 @@ describe("일정 크기와 예상 시간 동기화", () => {
     expect(store.getState().tasks[0]?.estimate).toBe(45);
   });
 
-  it("확정 후 이유 없이 크기를 바꾸면 미리보기와 예상 시간을 원래대로 되돌린다", () => {
+  it("확정 후 변경 모드가 아니면 크기 변경을 막고 원래대로 되돌린다", () => {
     const store = createPlannerStore(seed({
       blocks: [block("block-1", "task-1", 9 * 60)],
       planStatus: "committed",
@@ -230,7 +230,7 @@ describe("일정 크기와 예상 시간 동기화", () => {
 
     expect(store.getState().blocks[0]?.duration).toBe(30);
     expect(store.getState().tasks[0]?.estimate).toBe(30);
-    expect(store.getState().notice).toContain("변경 이유");
+    expect(store.getState().notice).toContain("계획 변경");
   });
 
   it("확정 후 입력한 마지막 크기 변경 이유를 블록에 보존한다", () => {
@@ -299,7 +299,7 @@ describe("브레인덤프 작업 삭제", () => {
     expect(store.getState().notice).toContain("함께 삭제");
   });
 
-  it("확정 후 이유 없이 배치된 작업을 삭제하지 않는다", () => {
+  it("확정 후 변경 모드가 아니면 배치된 작업을 삭제하지 않는다", () => {
     const store = createPlannerStore(seed({
       blocks: [block("block-1", "task-1", 9 * 60)],
       planStatus: "committed",
@@ -309,7 +309,7 @@ describe("브레인덤프 작업 삭제", () => {
 
     expect(store.getState().tasks).toHaveLength(1);
     expect(store.getState().blocks).toHaveLength(1);
-    expect(store.getState().notice).toContain("변경 이유");
+    expect(store.getState().notice).toContain("계획 변경");
   });
 
   it("확정 후 이유를 입력하면 작업과 타임블록을 함께 삭제한다", () => {
@@ -380,6 +380,68 @@ describe("계획 상태 규칙", () => {
       baselineStart: 9 * 60 + 15,
       baselineDuration: 45,
     });
+  });
+
+  it("변경 모드에서 여러 조정을 한 뒤 하나의 공통 이유로 확정한다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+      planStatus: "committed",
+    }));
+
+    store.getState().beginPlanEdit();
+    store.getState().moveBlock("block-1", 10 * 60);
+    store.getState().resizeBlock("block-1", 45);
+
+    expect(store.getState().isPlanEditing).toBe(true);
+    expect(store.getState().hasPendingPlanChanges).toBe(true);
+
+    const finished = store.getState().finishPlanEdit("오후 약속에 맞춰 집중 시간을 재배치함");
+
+    expect(finished).toBe(true);
+    expect(store.getState().isPlanEditing).toBe(false);
+    expect(store.getState().blocks[0]?.changeReasons).toMatchObject({
+      moved: "오후 약속에 맞춰 집중 시간을 재배치함",
+      resized: "오후 약속에 맞춰 집중 시간을 재배치함",
+    });
+  });
+
+  it("변경 사항이 있으면 공통 이유 없이 변경 모드를 끝내지 않는다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+      planStatus: "committed",
+    }));
+
+    store.getState().beginPlanEdit();
+    store.getState().moveBlock("block-1", 10 * 60);
+
+    expect(store.getState().finishPlanEdit()).toBe(false);
+    expect(store.getState().isPlanEditing).toBe(true);
+    expect(store.getState().notice).toContain("변경의 이유");
+  });
+
+  it("변경 없이 변경 모드를 끝낼 때는 이유를 요구하지 않는다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+      planStatus: "committed",
+    }));
+
+    store.getState().beginPlanEdit();
+
+    expect(store.getState().finishPlanEdit()).toBe(true);
+    expect(store.getState().isPlanEditing).toBe(false);
+  });
+
+  it("변경 모드 중에는 일과 완료를 막는다", () => {
+    const store = createPlannerStore(seed({
+      blocks: [block("block-1", "task-1", 9 * 60)],
+      planStatus: "committed",
+    }));
+
+    store.getState().beginPlanEdit();
+    store.getState().closePlan();
+
+    expect(store.getState().planStatus).toBe("committed");
+    expect(store.getState().notice).toContain("변경 확정");
   });
 
   it("일과 완료 후에는 일정 삭제를 막는다", () => {

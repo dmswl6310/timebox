@@ -79,6 +79,9 @@ export const demoSeed: PlannerSeed = {
 export type PlannerState = PlannerSeed & {
   mobileView: MobileView;
   notice: string | null;
+  isPlanEditing: boolean;
+  hasPendingPlanChanges: boolean;
+  pendingCancelledBlocks: TimeBlock[];
   addTag: (name: string) => void;
   setDayStartHour: (hour: number) => void;
   addTask: (title: string, tag: TagName, estimate: number) => void;
@@ -99,9 +102,28 @@ export type PlannerState = PlannerSeed & {
   setMood: (value: number) => void;
   saveJournal: (silent?: boolean) => void;
   confirmPlan: () => void;
+  beginPlanEdit: () => void;
+  finishPlanEdit: (reason?: string) => boolean;
   closePlan: () => void;
   setNotice: (value: string | null) => void;
 };
+
+export const PENDING_PLAN_CHANGE_REASON = "__pending_plan_change_reason__";
+
+function changeReasonFor(state: PlannerState, reason?: string) {
+  return reason?.trim() || (state.isPlanEditing ? PENDING_PLAN_CHANGE_REASON : undefined);
+}
+
+function hasPendingReason(reasons?: TimeBlock["changeReasons"]) {
+  return Object.values(reasons ?? {}).some((reason) => reason === PENDING_PLAN_CHANGE_REASON);
+}
+
+function finalizeReasons(reasons: TimeBlock["changeReasons"], reason: string) {
+  if (!reasons) return reasons;
+  return Object.fromEntries(
+    Object.entries(reasons).map(([kind, value]) => [kind, value === PENDING_PLAN_CHANGE_REASON ? reason : value]),
+  ) as TimeBlock["changeReasons"];
+}
 
 function overlaps(blocks: TimeBlock[], start: number, duration: number, ignoredBlockId?: string) {
   return blocks.some((block) => block.id !== ignoredBlockId && start < block.start + block.duration && start + duration > block.start);
@@ -158,6 +180,9 @@ export function createPlannerStore(seed: PlannerSeed) {
       ...initial,
       mobileView: "schedule",
       notice: null,
+      isPlanEditing: false,
+      hasPendingPlanChanges: false,
+      pendingCancelledBlocks: [],
 
       addTag: (name) => {
         const cleanTag = normalizeTagName(name);
@@ -206,12 +231,13 @@ export function createPlannerStore(seed: PlannerSeed) {
         if (!target || !cleanTitle) return false;
         const linkedBlock = state.blocks.find((block) => block.taskId === taskId);
         const estimateChanged = patch.estimate !== target.estimate;
+        const changeReason = changeReasonFor(state, reason);
         if (linkedBlock && estimateChanged && state.planStatus === "closed") {
           set({ notice: "일과를 완료한 일정의 예상 시간은 바꿀 수 없어요." });
           return false;
         }
-        if (linkedBlock && estimateChanged && state.planStatus === "committed" && !reason?.trim()) {
-          set({ notice: "확정 후 예상 시간을 바꾸려면 변경 이유가 필요해요." });
+        if (linkedBlock && estimateChanged && state.planStatus === "committed" && !changeReason) {
+          set({ notice: "먼저 ‘계획 변경’을 눌러 주세요." });
           return false;
         }
         const safeEstimate = Math.max(15, Math.min(Math.round(patch.estimate / 15) * 15, linkedBlock ? PLAN_END_MINUTES - linkedBlock.start : 480));
@@ -228,7 +254,7 @@ export function createPlannerStore(seed: PlannerSeed) {
           color: colorForTag(cleanTag),
         };
         const changeReasons = linkedBlock && estimateChanged && state.planStatus === "committed"
-          ? { ...linkedBlock.changeReasons, resized: reason?.trim() }
+          ? { ...linkedBlock.changeReasons, resized: changeReason }
           : linkedBlock?.changeReasons;
         set({
           tasks: state.tasks.map((task) => task.id === taskId ? nextTask : task),
@@ -247,6 +273,7 @@ export function createPlannerStore(seed: PlannerSeed) {
           notice: linkedBlock && estimateChanged
             ? "예상 시간과 연결된 타임블록 크기를 함께 바꿨어요."
             : "할 일 정보를 바꿨어요.",
+          hasPendingPlanChanges: state.hasPendingPlanChanges || Boolean(linkedBlock && estimateChanged && state.isPlanEditing),
         });
         const ctx = context();
         if (ctx) {
@@ -278,12 +305,13 @@ export function createPlannerStore(seed: PlannerSeed) {
 
       scheduleTask: (taskId, requestedStart, reason) => {
         const state = get();
+        const changeReason = changeReasonFor(state, reason);
         if (state.planStatus === "closed") {
           set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
           return;
         }
-        if (state.planStatus === "committed" && !reason?.trim()) {
-          set({ notice: "확정 후 일정을 추가하려면 변경 이유가 필요해요." });
+        if (state.planStatus === "committed" && !changeReason) {
+          set({ notice: "먼저 ‘계획 변경’을 눌러 주세요." });
           return;
         }
         const task = state.tasks.find((item) => item.id === taskId);
@@ -302,9 +330,9 @@ export function createPlannerStore(seed: PlannerSeed) {
           id: crypto.randomUUID(), taskId: task.id, title: task.title,
           start: Math.max(state.dayStartHour * 60, Math.min(desiredStart, PLAN_END_MINUTES - duration)),
           duration, type: "task", color: task.color, status: "scheduled",
-          changeReasons: state.planStatus === "committed" ? { created: reason?.trim() } : undefined,
+          changeReasons: state.planStatus === "committed" ? { created: changeReason } : undefined,
         };
-        set({ blocks: [...state.blocks, block], selectedBlockId: block.id, mobileView: "schedule", notice: `${task.estimate}분 작업을 일정에 배치했어요.` });
+        set({ blocks: [...state.blocks, block], selectedBlockId: block.id, mobileView: "schedule", notice: `${task.estimate}분 작업을 일정에 배치했어요.`, hasPendingPlanChanges: state.hasPendingPlanChanges || state.isPlanEditing });
         const ctx = context();
         if (ctx) {
           save(() => persistBlockCreate(ctx, block));
@@ -313,12 +341,13 @@ export function createPlannerStore(seed: PlannerSeed) {
 
       moveBlock: (blockId, start, reason) => {
         const state = get();
+        const changeReason = changeReasonFor(state, reason);
         if (state.planStatus === "closed") {
           set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
           return;
         }
-        if (state.planStatus === "committed" && !reason?.trim()) {
-          set({ notice: "확정 후 시간을 옮기려면 변경 이유가 필요해요." });
+        if (state.planStatus === "committed" && !changeReason) {
+          set({ notice: "먼저 ‘계획 변경’을 눌러 주세요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
@@ -328,8 +357,8 @@ export function createPlannerStore(seed: PlannerSeed) {
           set({ notice: "다른 일정과 겹칠 수 없어요. 빈 시간으로 옮겨 주세요." });
           return;
         }
-        const changeReasons = state.planStatus === "committed" ? { ...block.changeReasons, moved: reason?.trim() } : block.changeReasons;
-        set({ blocks: state.blocks.map((item) => item.id === blockId ? { ...item, start: safeStart, changeReasons } : item), selectedBlockId: blockId, notice: "타임블록 시간을 옮겼어요." });
+        const changeReasons = state.planStatus === "committed" ? { ...block.changeReasons, moved: changeReason } : block.changeReasons;
+        set({ blocks: state.blocks.map((item) => item.id === blockId ? { ...item, start: safeStart, changeReasons } : item), selectedBlockId: blockId, notice: "타임블록 시간을 옮겼어요.", hasPendingPlanChanges: state.hasPendingPlanChanges || state.isPlanEditing });
         const ctx = context();
         if (ctx) {
           save(() => persistBlockMove(ctx, blockId, safeStart, block.duration, changeReasons));
@@ -355,20 +384,21 @@ export function createPlannerStore(seed: PlannerSeed) {
 
       resizeBlock: (blockId, duration, originalDuration, reason) => {
         const state = get();
+        const changeReason = changeReasonFor(state, reason);
         if (state.planStatus === "closed") {
           set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
-        if (state.planStatus === "committed" && !reason?.trim()) {
+        if (state.planStatus === "committed" && !changeReason) {
           if (originalDuration !== undefined) {
             set((current) => ({
               blocks: current.blocks.map((item) => item.id === blockId ? { ...item, duration: originalDuration } : item),
               tasks: block.taskId ? current.tasks.map((task) => task.id === block.taskId ? { ...task, estimate: originalDuration } : task) : current.tasks,
             }));
           }
-          set({ notice: "확정 후 시간을 조정하려면 변경 이유가 필요해요." });
+          set({ notice: "먼저 ‘계획 변경’을 눌러 주세요." });
           return;
         }
         const previousDuration = originalDuration ?? block.duration;
@@ -384,7 +414,7 @@ export function createPlannerStore(seed: PlannerSeed) {
           });
           return;
         }
-        const changeReasons = state.planStatus === "committed" ? { ...block.changeReasons, resized: reason?.trim() } : block.changeReasons;
+        const changeReasons = state.planStatus === "committed" ? { ...block.changeReasons, resized: changeReason } : block.changeReasons;
         set({
           blocks: state.blocks.map((item) => item.id === blockId
             ? { ...item, duration: safeDuration, changeReasons }
@@ -394,6 +424,7 @@ export function createPlannerStore(seed: PlannerSeed) {
             : state.tasks,
           selectedBlockId: blockId,
           notice: `타임블록을 ${safeDuration}분으로 조정했어요.`,
+          hasPendingPlanChanges: state.hasPendingPlanChanges || state.isPlanEditing,
         });
         const ctx = context();
         if (ctx) {
@@ -405,17 +436,18 @@ export function createPlannerStore(seed: PlannerSeed) {
 
       removeBlock: (blockId, reason) => {
         const state = get();
+        const changeReason = changeReasonFor(state, reason);
         if (state.planStatus === "closed") {
           set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
           return;
         }
-        if (state.planStatus === "committed" && !reason?.trim()) {
-          set({ notice: "확정 후 일정을 빼려면 변경 이유가 필요해요." });
+        if (state.planStatus === "committed" && !changeReason) {
+          set({ notice: "먼저 ‘계획 변경’을 눌러 주세요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
         if (!block) return;
-        const changeReasons = state.planStatus === "committed" ? { ...block.changeReasons, cancelled: reason?.trim() } : block.changeReasons;
+        const changeReasons = state.planStatus === "committed" ? { ...block.changeReasons, cancelled: changeReason } : block.changeReasons;
         const blocks = state.blocks.filter((item) => item.id !== blockId);
         const isCommittedChange = state.planStatus === "committed";
         set({
@@ -426,6 +458,10 @@ export function createPlannerStore(seed: PlannerSeed) {
             : block.taskId
               ? "시간표에서 뺐어요. 작업은 브레인덤프에 남아 있어요."
               : "타임블록을 삭제했어요.",
+          hasPendingPlanChanges: state.hasPendingPlanChanges || state.isPlanEditing,
+          pendingCancelledBlocks: state.isPlanEditing
+            ? [...state.pendingCancelledBlocks.filter((item) => item.id !== block.id), { ...block, changeReasons }]
+            : state.pendingCancelledBlocks,
         });
         const ctx = context();
         if (ctx) {
@@ -471,12 +507,13 @@ export function createPlannerStore(seed: PlannerSeed) {
 
       addBufferAfter: (blockId, reason) => {
         const state = get();
+        const changeReason = changeReasonFor(state, reason);
         if (state.planStatus === "closed") {
           set({ notice: "일과를 완료한 뒤에는 일정을 바꿀 수 없어요." });
           return;
         }
-        if (state.planStatus === "committed" && !reason?.trim()) {
-          set({ notice: "확정 후 여유 시간을 추가하려면 변경 이유가 필요해요." });
+        if (state.planStatus === "committed" && !changeReason) {
+          set({ notice: "먼저 ‘계획 변경’을 눌러 주세요." });
           return;
         }
         const block = state.blocks.find((item) => item.id === blockId);
@@ -486,8 +523,8 @@ export function createPlannerStore(seed: PlannerSeed) {
           set({ notice: "바로 뒤에 15분 버퍼를 넣을 빈 시간이 없어요." });
           return;
         }
-        const buffer: TimeBlock = { id: crypto.randomUUID(), title: "버퍼 타임", start: bufferStart, duration: 15, type: "buffer", color: "green", status: "scheduled", changeReasons: state.planStatus === "committed" ? { created: reason?.trim() } : undefined };
-        set({ blocks: [...state.blocks, buffer], selectedBlockId: buffer.id, notice: "뒤에 15분 버퍼를 추가했어요." });
+        const buffer: TimeBlock = { id: crypto.randomUUID(), title: "버퍼 타임", start: bufferStart, duration: 15, type: "buffer", color: "green", status: "scheduled", changeReasons: state.planStatus === "committed" ? { created: changeReason } : undefined };
+        set({ blocks: [...state.blocks, buffer], selectedBlockId: buffer.id, notice: "뒤에 15분 버퍼를 추가했어요.", hasPendingPlanChanges: state.hasPendingPlanChanges || state.isPlanEditing });
         const ctx = context();
         if (ctx) {
           save(() => persistBlockCreate(ctx, buffer));
@@ -497,16 +534,17 @@ export function createPlannerStore(seed: PlannerSeed) {
       discardTask: (taskId, reason) => {
         const state = get();
         const linkedBlock = state.blocks.find((block) => block.taskId === taskId);
+        const changeReason = changeReasonFor(state, reason);
         if (linkedBlock && state.planStatus === "closed") {
           set({ notice: "일과를 완료한 일정의 작업은 삭제할 수 없어요." });
           return;
         }
-        if (linkedBlock && state.planStatus === "committed" && !reason?.trim()) {
-          set({ notice: "확정된 일정의 작업을 삭제하려면 변경 이유가 필요해요." });
+        if (linkedBlock && state.planStatus === "committed" && !changeReason) {
+          set({ notice: "먼저 ‘계획 변경’을 눌러 주세요." });
           return;
         }
         const changeReasons = linkedBlock && state.planStatus === "committed"
-          ? { ...linkedBlock.changeReasons, cancelled: reason?.trim() }
+          ? { ...linkedBlock.changeReasons, cancelled: changeReason }
           : linkedBlock?.changeReasons;
         const blocks = linkedBlock ? state.blocks.filter((block) => block.id !== linkedBlock.id) : state.blocks;
         set({
@@ -516,6 +554,10 @@ export function createPlannerStore(seed: PlannerSeed) {
           notice: linkedBlock
             ? "할 일과 연결된 타임블록을 함께 삭제했어요."
             : "할 일을 휴지통으로 옮겼어요.",
+          hasPendingPlanChanges: state.hasPendingPlanChanges || Boolean(linkedBlock && state.isPlanEditing),
+          pendingCancelledBlocks: linkedBlock && state.isPlanEditing
+            ? [...state.pendingCancelledBlocks.filter((item) => item.id !== linkedBlock.id), { ...linkedBlock, changeReasons }]
+            : state.pendingCancelledBlocks,
         });
         const ctx = context();
         if (ctx) {
@@ -549,9 +591,69 @@ export function createPlannerStore(seed: PlannerSeed) {
           baselineDuration: block.duration,
           changeReasons: undefined,
         }));
-        set({ blocks, planStatus: "committed", notice: "선택한 날짜의 계획을 확정했어요. 완료 전까지 자유롭게 조정할 수 있어요." });
+        set({
+          blocks,
+          planStatus: "committed",
+          isPlanEditing: false,
+          hasPendingPlanChanges: false,
+          pendingCancelledBlocks: [],
+          notice: "선택한 날짜의 계획을 확정했어요. 바꾸려면 ‘계획 변경’을 눌러 주세요.",
+        });
         const ctx = context();
         if (ctx) save(() => persistPlanCommit(ctx, blocks));
+      },
+      beginPlanEdit: () => {
+        const state = get();
+        if (state.isPlanEditing) {
+          set({ notice: "이미 계획을 변경하고 있어요." });
+          return;
+        }
+        if (state.planStatus !== "committed") {
+          set({ notice: state.planStatus === "closed" ? "일과를 완료한 뒤에는 계획을 바꿀 수 없어요." : "먼저 계획을 확정해 주세요." });
+          return;
+        }
+        set({ isPlanEditing: true, hasPendingPlanChanges: false, pendingCancelledBlocks: [], notice: "변경 모드예요. 여러 일정을 조정한 뒤 ‘변경 확정’을 눌러 주세요." });
+      },
+      finishPlanEdit: (reason) => {
+        const state = get();
+        if (!state.isPlanEditing) return false;
+        if (!state.hasPendingPlanChanges) {
+          set({ isPlanEditing: false, pendingCancelledBlocks: [], notice: "변경 없이 확정 상태로 돌아왔어요." });
+          return true;
+        }
+        const cleanReason = reason?.trim().slice(0, 500);
+        if (!cleanReason) {
+          set({ notice: "이번 일정 변경의 이유를 입력해 주세요." });
+          return false;
+        }
+
+        const changedBlocks = state.blocks.filter((block) => hasPendingReason(block.changeReasons));
+        const blocks = state.blocks.map((block) => hasPendingReason(block.changeReasons)
+          ? { ...block, changeReasons: finalizeReasons(block.changeReasons, cleanReason) }
+          : block);
+        const cancelledBlocks = state.pendingCancelledBlocks.map((block) => ({
+          ...block,
+          changeReasons: finalizeReasons(block.changeReasons, cleanReason),
+        }));
+        set({
+          blocks,
+          isPlanEditing: false,
+          hasPendingPlanChanges: false,
+          pendingCancelledBlocks: [],
+          notice: `일정 변경 ${changedBlocks.length + cancelledBlocks.length}개를 하나의 이유로 확정했어요.`,
+        });
+
+        const ctx = context();
+        if (ctx) {
+          for (const changed of changedBlocks) {
+            const finalized = blocks.find((block) => block.id === changed.id);
+            if (finalized) save(() => persistBlockMove(ctx, finalized.id, finalized.start, finalized.duration, finalized.changeReasons));
+          }
+          for (const cancelled of cancelledBlocks) {
+            save(() => persistBlockCancel(ctx, cancelled.id, cancelled.changeReasons));
+          }
+        }
+        return true;
       },
       closePlan: () => {
         const state = get();
@@ -561,6 +663,10 @@ export function createPlannerStore(seed: PlannerSeed) {
         }
         if (state.planStatus === "closed") {
           set({ notice: "이 날짜의 일과를 이미 완료했어요." });
+          return;
+        }
+        if (state.isPlanEditing) {
+          set({ notice: "먼저 변경 이유를 남기고 ‘변경 확정’을 눌러 주세요." });
           return;
         }
         if (state.planDate > dateInTimeZone(state.timezone)) {

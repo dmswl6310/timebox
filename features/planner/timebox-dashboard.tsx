@@ -46,7 +46,7 @@ import { createClient } from "@/lib/supabase/client";
 import { loadRecordBundle, type ActivityKind, type RecordBundle } from "./records-data";
 import { filterBrainDumpTasks, normalizeBrainDumpQuery } from "./brain-dump-search";
 import { resolvePlannerDropIntent } from "./drag-drop-intent";
-import { PlannerStoreProvider, usePlannerStore, type PlannerSeed } from "./store";
+import { PENDING_PLAN_CHANGE_REASON, PlannerStoreProvider, usePlannerStore, type PlannerSeed } from "./store";
 import { formatPlanTime, PLAN_END_HOUR } from "./planner-time";
 import { tagSuggestions } from "./tag-utils";
 import type { TagName, Task, TimeBlock } from "./types";
@@ -79,11 +79,13 @@ function useChangeReason() {
 
 async function reasonForChange(
   planStatus: "draft" | "committed" | "closed",
+  isPlanEditing: boolean,
   request: ChangeReasonRequest,
   title: string,
   description: string,
 ) {
   if (planStatus !== "committed") return undefined;
+  if (isPlanEditing) return PENDING_PLAN_CHANGE_REASON;
   return (await request(title, description)) ?? null;
 }
 
@@ -183,6 +185,8 @@ function Logo() {
 function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOptions: string[]; priority?: boolean }) {
   const blocks = usePlannerStore((state) => state.blocks);
   const planStatus = usePlannerStore((state) => state.planStatus);
+  const isPlanEditing = usePlannerStore((state) => state.isPlanEditing);
+  const setNotice = usePlannerStore((state) => state.setNotice);
   const toggleMit = usePlannerStore((state) => state.toggleMit);
   const scheduleTask = usePlannerStore((state) => state.scheduleTask);
   const updateTask = usePlannerStore((state) => state.updateTask);
@@ -202,15 +206,20 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
   const { ref, handleRef, isDragging } = useDraggable({
     id: `${priority ? "priority" : "task"}:${task.id}`,
     data: { kind: "task", taskId: task.id, title: task.title },
-    disabled: scheduled || planStatus === "closed",
+    disabled: scheduled || planStatus === "closed" || (planStatus === "committed" && !isPlanEditing),
   });
 
   const save = async () => {
     const linkedBlock = blocks.find((block) => block.taskId === task.id);
     const estimateChanged = estimate !== task.estimate;
+    if (linkedBlock && estimateChanged && planStatus === "committed" && !isPlanEditing) {
+      setNotice("예상 시간을 바꾸려면 먼저 ‘계획 변경’을 눌러 주세요.");
+      return;
+    }
     const reason = linkedBlock && estimateChanged
       ? await reasonForChange(
         planStatus,
+        isPlanEditing,
         requestChangeReason,
         "예상 시간을 바꾸는 이유",
         `‘${task.title}’ 작업을 ${formatDuration(task.estimate)}에서 ${formatDuration(estimate)}으로 바꾸는 이유를 남겨 주세요. 연결된 타임블록 크기도 함께 바뀌어요.`,
@@ -224,6 +233,7 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
   const addToSchedule = async () => {
     const reason = await reasonForChange(
       planStatus,
+      isPlanEditing,
       requestChangeReason,
       "일정을 추가하는 이유",
       `‘${task.title}’ 작업을 확정된 일정에 추가하는 이유를 남겨 주세요.`,
@@ -239,12 +249,11 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
       discardTask(task.id);
       return;
     }
-    const reason = await requestChangeReason(
-      "할 일과 일정을 삭제하는 이유",
-      `‘${task.title}’ 작업과 연결된 타임블록을 함께 삭제하는 이유를 남겨 주세요.`,
-    );
-    if (!reason?.trim()) return;
-    discardTask(task.id, reason);
+    if (!isPlanEditing) {
+      setNotice("일정을 삭제하려면 먼저 ‘계획 변경’을 눌러 주세요.");
+      return;
+    }
+    discardTask(task.id, PENDING_PLAN_CHANGE_REASON);
   };
 
   if (editing) {
@@ -278,7 +287,7 @@ function CompactTask({ task, tagOptions, priority = false }: { task: Task; tagOp
       <button className="note-star" data-active={task.isMit} onClick={() => toggleMit(task.id)} aria-label="선택한 날짜의 우선순위 전환">
         <Star size={15} fill={task.isMit ? "currentColor" : "none"} />
       </button>
-      <button className="note-task-copy" onClick={addToSchedule} title={scheduled ? "이미 시간표에 배치됨" : planStatus === "closed" ? "일과 기록을 완료한 일정입니다" : "빈 시간에 배치"} disabled={scheduled || planStatus === "closed"}>
+      <button className="note-task-copy" onClick={addToSchedule} title={scheduled ? "이미 시간표에 배치됨" : planStatus === "closed" ? "일과 기록을 완료한 일정입니다" : planStatus === "committed" && !isPlanEditing ? "계획 변경 모드에서 배치할 수 있어요" : "빈 시간에 배치"} disabled={scheduled || planStatus === "closed" || (planStatus === "committed" && !isPlanEditing)}>
         <strong>{task.title}</strong>
         <span><Tag size={11} /> {task.tag} · {task.estimate}분{scheduled && <em>시간표에 배치됨</em>}</span>
       </button>
@@ -366,13 +375,15 @@ function BrainDumpSection() {
 
 function TimeSlot({ minutes, visible }: { minutes: number; visible: boolean }) {
   const planStatus = usePlannerStore((state) => state.planStatus);
-  const { ref, isDropTarget } = useDroppable({ id: `slot:${minutes}`, disabled: planStatus === "closed" });
+  const isPlanEditing = usePlannerStore((state) => state.isPlanEditing);
+  const { ref, isDropTarget } = useDroppable({ id: `slot:${minutes}`, disabled: planStatus === "closed" || (planStatus === "committed" && !isPlanEditing) });
   return <div ref={ref} className="quarter-slot" data-hidden={!visible} data-target={isDropTarget} aria-hidden={!visible} />;
 }
 
 function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number; isLast: boolean }) {
   const tasks = usePlannerStore((state) => state.tasks);
   const planStatus = usePlannerStore((state) => state.planStatus);
+  const isPlanEditing = usePlannerStore((state) => state.isPlanEditing);
   const selectBlock = usePlannerStore((state) => state.selectBlock);
   const toggleBlockComplete = usePlannerStore((state) => state.toggleBlockComplete);
   const selectedBlockId = usePlannerStore((state) => state.selectedBlockId);
@@ -389,7 +400,7 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
   const { ref, handleRef, isDragging } = useDraggable({
     id: `block:${block.id}:${hour}`,
     data: { kind: "block", blockId: block.id, title: block.title, segmentOffset: start - block.start },
-    disabled: planStatus === "closed",
+    disabled: planStatus === "closed" || (planStatus === "committed" && !isPlanEditing),
   });
 
   const beginResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -418,6 +429,7 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
       if (nextDuration !== originalDuration) {
         const reason = await reasonForChange(
           planStatus,
+          isPlanEditing,
           requestChangeReason,
           "시간을 조정하는 이유",
           `‘${block.title}’ 블록을 ${formatDuration(originalDuration)}에서 ${formatDuration(nextDuration)}으로 바꾸는 이유를 남겨 주세요.`,
@@ -447,14 +459,14 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
       style={{ gridColumn: `${startQuarter + 1} / span ${span}` }}
       onClick={() => selectBlock(block.id)}
     >
-      {planStatus !== "closed" && <button ref={handleRef} className="paper-block-drag" aria-label={`${block.title} 이동`} title="블록 몸통을 끌어서 이동"><GripVertical size={12} /></button>}
+      {(planStatus === "draft" || isPlanEditing) && <button ref={handleRef} className="paper-block-drag" aria-label={`${block.title} 이동`} title="블록 몸통을 끌어서 이동"><GripVertical size={12} /></button>}
       <span className="paper-block-title">{first && isMit && <Star className="paper-block-mit" size={13} fill="currentColor" />}{block.title}</span>
       {isLast && planStatus !== "closed" && (
         <>
           <button className="paper-block-check" data-checked={block.status === "completed"} onClick={(event) => { event.stopPropagation(); toggleBlockComplete(block.id); }} aria-label="완료 전환">
             {block.status === "completed" && <Check size={11} />}
           </button>
-          <button className="paper-block-resize" onPointerDown={beginResize} aria-label={`${block.title} 길이 조절`} title="끌어서 시간 늘리기·줄이기"><span /></button>
+          {(planStatus === "draft" || isPlanEditing) && <button className="paper-block-resize" onPointerDown={beginResize} aria-label={`${block.title} 길이 조절`} title="끌어서 시간 늘리기·줄이기"><span /></button>}
         </>
       )}
     </article>
@@ -464,6 +476,7 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
 function SelectedBlockBar() {
   const blocks = usePlannerStore((state) => state.blocks);
   const planStatus = usePlannerStore((state) => state.planStatus);
+  const isPlanEditing = usePlannerStore((state) => state.isPlanEditing);
   const selectedBlockId = usePlannerStore((state) => state.selectedBlockId);
   const resizeBlock = usePlannerStore((state) => state.resizeBlock);
   const updateActualMinutes = usePlannerStore((state) => state.updateActualMinutes);
@@ -471,12 +484,15 @@ function SelectedBlockBar() {
   const toggleBlockComplete = usePlannerStore((state) => state.toggleBlockComplete);
   const removeBlock = usePlannerStore((state) => state.removeBlock);
   const requestChangeReason = useChangeReason();
+  const [toolsOpen, setToolsOpen] = useState(false);
   const selected = blocks.find((block) => block.id === selectedBlockId);
   if (!selected) return null;
+  const canChangeSchedule = planStatus === "draft" || isPlanEditing;
   const changed = selected.baselineStart !== undefined && (selected.start !== selected.baselineStart || selected.duration !== selected.baselineDuration);
   const changeDuration = async (duration: number) => {
     const reason = await reasonForChange(
       planStatus,
+      isPlanEditing,
       requestChangeReason,
       "시간을 조정하는 이유",
       `‘${selected.title}’ 블록을 ${formatDuration(selected.duration)}에서 ${formatDuration(Math.max(15, duration))}으로 바꾸는 이유를 남겨 주세요.`,
@@ -485,33 +501,38 @@ function SelectedBlockBar() {
     resizeBlock(selected.id, duration, undefined, reason);
   };
   const addBuffer = async () => {
-    const reason = await reasonForChange(planStatus, requestChangeReason, "여유 시간을 추가하는 이유", `‘${selected.title}’ 다음에 15분 여유를 추가하는 이유를 남겨 주세요.`);
+    const reason = await reasonForChange(planStatus, isPlanEditing, requestChangeReason, "여유 시간을 추가하는 이유", `‘${selected.title}’ 다음에 15분 여유를 추가하는 이유를 남겨 주세요.`);
     if (reason === null) return;
     addBufferAfter(selected.id, reason);
   };
   const removeFromSchedule = async () => {
-    const reason = await reasonForChange(planStatus, requestChangeReason, "일정에서 빼는 이유", `‘${selected.title}’ 블록을 확정된 일정에서 빼는 이유를 남겨 주세요.`);
+    const reason = await reasonForChange(planStatus, isPlanEditing, requestChangeReason, "일정에서 빼는 이유", `‘${selected.title}’ 블록을 확정된 일정에서 빼는 이유를 남겨 주세요.`);
     if (reason === null) return;
     removeBlock(selected.id, reason);
   };
 
   return (
-    <div className="selected-block-bar">
-      <div><strong>{selected.title}</strong><span>{formatTime(selected.start)}–{formatTime(selected.start + selected.duration)}</span></div>
-      {changed && <span className="change-pill">확정 후 변경됨{selected.changeReasons && Object.keys(selected.changeReasons).length ? " · 이유 기록됨" : ""}</span>}
+    <div className="selected-block-bar" data-expanded={toolsOpen}>
+      <div className="selected-block-summary"><strong>{selected.title}</strong><span>{formatTime(selected.start)}–{formatTime(selected.start + selected.duration)}</span></div>
+      {changed && <span className="change-pill">변경됨</span>}
       {planStatus === "closed" ? (
         <span className="closed-pill"><CheckCircle2 size={13} /> 일과 기록 완료</span>
       ) : (
         <>
-          <div className="resize-actions" aria-label="블록 크기 조정">
-            <button onClick={() => changeDuration(selected.duration - 15)} aria-label="15분 줄이기"><Minus size={14} /></button>
-            <b>{formatDuration(selected.duration)}</b>
-            <button onClick={() => changeDuration(selected.duration + 15)} aria-label="15분 늘리기"><Plus size={14} /></button>
-          </div>
-          <label className="actual-time">실제 <input type="number" min="5" step="5" value={selected.actualMinutes ?? selected.duration} onChange={(event) => updateActualMinutes(selected.id, Number(event.target.value))} />분</label>
-          <button className="quiet-action" onClick={addBuffer}>+ 15분 여유</button>
-          <button className="remove-block-action" onClick={removeFromSchedule}><Trash2 size={14} /> 일정에서 빼기</button>
           <button className="complete-action" data-completed={selected.status === "completed"} onClick={() => toggleBlockComplete(selected.id)}><Check size={15} /> {selected.status === "completed" ? "완료됨" : "완료"}</button>
+          <button className="selected-tools-toggle" data-open={toolsOpen} onClick={() => setToolsOpen((open) => !open)}>도구 <ChevronRight size={14} /></button>
+          {toolsOpen && (
+            <div className="selected-block-tools">
+              {canChangeSchedule && <div className="resize-actions" aria-label="블록 크기 조정">
+                <button onClick={() => changeDuration(selected.duration - 15)} aria-label="15분 줄이기"><Minus size={14} /></button>
+                <b>{formatDuration(selected.duration)}</b>
+                <button onClick={() => changeDuration(selected.duration + 15)} aria-label="15분 늘리기"><Plus size={14} /></button>
+              </div>}
+              <label className="actual-time">실제 <input type="number" min="5" step="5" value={selected.actualMinutes ?? selected.duration} onChange={(event) => updateActualMinutes(selected.id, Number(event.target.value))} />분</label>
+              {canChangeSchedule && <button className="quiet-action" onClick={addBuffer}>+ 15분 여유</button>}
+              {canChangeSchedule && <button className="remove-block-action" onClick={removeFromSchedule}><Trash2 size={14} /> 일정에서 빼기</button>}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -556,9 +577,14 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
   const userId = usePlannerStore((state) => state.userId);
   const planDate = usePlannerStore((state) => state.planDate);
   const planStatus = usePlannerStore((state) => state.planStatus);
+  const isPlanEditing = usePlannerStore((state) => state.isPlanEditing);
+  const hasPendingPlanChanges = usePlannerStore((state) => state.hasPendingPlanChanges);
   const blocks = usePlannerStore((state) => state.blocks);
   const confirmPlan = usePlannerStore((state) => state.confirmPlan);
+  const beginPlanEdit = usePlannerStore((state) => state.beginPlanEdit);
+  const finishPlanEdit = usePlannerStore((state) => state.finishPlanEdit);
   const closePlan = usePlannerStore((state) => state.closePlan);
+  const requestChangeReason = useChangeReason();
   const [resolution, setResolution] = useState<15 | 30>(30);
   const [notesOpen, setNotesOpen] = useState(true);
   const planned = blocks.reduce((sum, block) => sum + block.duration, 0);
@@ -566,6 +592,18 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
   const isFuturePlan = planDate > today;
   const openDate = (offset: number) => {
     router.push(`/?date=${shiftIsoDate(planDate, offset)}`);
+  };
+  const confirmPlanChanges = async () => {
+    if (!hasPendingPlanChanges) {
+      finishPlanEdit();
+      return;
+    }
+    const reason = await requestChangeReason(
+      "이번 일정 변경 이유",
+      "이번 변경 모드에서 추가·이동·크기 조정·삭제한 일정 전체에 공통으로 남길 이유를 적어 주세요.",
+    );
+    if (!reason?.trim()) return;
+    finishPlanEdit(reason);
   };
 
   return (
@@ -585,15 +623,19 @@ function TodayView({ todayLabel }: { todayLabel: string }) {
           </div>
         </div>
         <div className="planner-heading-actions">
-          <button className="notes-toggle" onClick={() => setNotesOpen((open) => !open)}>{notesOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}{notesOpen ? "메모 닫기" : "메모 열기"}</button>
+          <button className="notes-toggle" onClick={() => setNotesOpen((open) => !open)}>{notesOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}{notesOpen ? "할 일 숨기기" : "할 일 보기"}</button>
           <div className="resolution-switch"><span>눈금</span><button data-active={resolution === 30} onClick={() => setResolution(30)}>30분</button><button data-active={resolution === 15} onClick={() => setResolution(15)}>15분</button></div>
           {planStatus === "draft" ? (
             <button className="confirm-plan" onClick={confirmPlan}>계획 확정하기</button>
+          ) : planStatus === "closed" ? (
+            <button className="close-day" data-closed="true" disabled><CheckCircle2 size={15} /> 일과 기록 완료</button>
           ) : (
             <>
-              <button className="confirm-plan" data-committed="true" onClick={confirmPlan}><Check size={15} /> 계획 확정됨</button>
-              <button className="close-day" data-closed={planStatus === "closed"} data-future={isFuturePlan} onClick={closePlan} disabled={planStatus === "closed" || isFuturePlan} title={isFuturePlan ? "해당 날짜가 되면 일과를 완료할 수 있어요." : undefined}>
-                <CheckCircle2 size={15} /> {planStatus === "closed" ? "일과 기록 완료" : isFuturePlan ? "해당 날짜에 완료" : "일과 완료"}
+              <button className="plan-edit-toggle" data-editing={isPlanEditing} onClick={isPlanEditing ? confirmPlanChanges : beginPlanEdit}>
+                {isPlanEditing ? <Check size={15} /> : <Pencil size={14} />} {isPlanEditing ? "변경 확정" : "계획 변경"}
+              </button>
+              <button className="close-day" data-future={isFuturePlan} onClick={closePlan} disabled={isFuturePlan || isPlanEditing} title={isPlanEditing ? "먼저 변경을 확정해 주세요." : isFuturePlan ? "해당 날짜가 되면 일과를 완료할 수 있어요." : undefined}>
+                <CheckCircle2 size={15} /> {isFuturePlan ? "해당 날짜에 완료" : "일과 완료"}
               </button>
             </>
           )}
@@ -1121,6 +1163,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   const dailyPlanId = usePlannerStore((state) => state.dailyPlanId);
   const planDate = usePlannerStore((state) => state.planDate);
   const planStatus = usePlannerStore((state) => state.planStatus);
+  const isPlanEditing = usePlannerStore((state) => state.isPlanEditing);
   const [page, setPage] = useState<Page>(initialPage);
   const serviceMode = useSyncExternalStore(subscribeServiceMode, getServiceModeSnapshot, () => "paper" as ServiceMode);
   const [recordsIntent, setRecordsIntent] = useState<"all" | "journal">("all");
@@ -1164,6 +1207,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
 
   const handleDragEnd = async (event: DragEndEvent) => {
     if (event.canceled) return;
+    if (planStatus === "committed" && !isPlanEditing) return;
     const source = event.operation.source;
     const targetId = String(event.operation.target?.id ?? "");
     if (!source) return;
@@ -1180,6 +1224,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
     if (intent.type === "remove") {
       const reason = await reasonForChange(
         planStatus,
+        isPlanEditing,
         requestChangeReason,
         "일정에서 빼는 이유",
         `‘${String(source.data.title ?? "타임블록")}’ 블록을 일정에서 빼는 이유를 남겨 주세요. 작업은 브레인덤프에 남아요.`,
@@ -1189,11 +1234,11 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
     }
     const start = intent.start;
     if (source.data.kind === "task") {
-      const reason = await reasonForChange(planStatus, requestChangeReason, "일정을 추가하는 이유", `‘${String(source.data.title ?? "작업")}’ 작업을 확정된 일정에 추가하는 이유를 남겨 주세요.`);
+      const reason = await reasonForChange(planStatus, isPlanEditing, requestChangeReason, "일정을 추가하는 이유", `‘${String(source.data.title ?? "작업")}’ 작업을 확정된 일정에 추가하는 이유를 남겨 주세요.`);
       if (reason !== null) scheduleTask(String(source.data.taskId), start, reason);
     }
     if (source.data.kind === "block") {
-      const reason = await reasonForChange(planStatus, requestChangeReason, "시간을 옮기는 이유", `‘${String(source.data.title ?? "타임블록")}’ 블록의 시작 시간을 바꾸는 이유를 남겨 주세요.`);
+      const reason = await reasonForChange(planStatus, isPlanEditing, requestChangeReason, "시간을 옮기는 이유", `‘${String(source.data.title ?? "타임블록")}’ 블록의 시작 시간을 바꾸는 이유를 남겨 주세요.`);
       if (reason !== null) moveBlock(String(source.data.blockId), start - Number(source.data.segmentOffset ?? 0), reason);
     }
   };

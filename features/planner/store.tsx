@@ -100,7 +100,7 @@ export type PlannerState = PlannerSeed & {
   setMobileView: (view: MobileView) => void;
   setJournal: (value: string) => void;
   setMood: (value: number) => void;
-  saveJournal: () => void;
+  saveJournal: () => Promise<void>;
   confirmPlan: () => void;
   beginPlanEdit: () => void;
   finishPlanEdit: (reason?: string) => boolean;
@@ -169,6 +169,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       writeQueue = writeQueue
         .then(operation)
         .catch(() => set({ notice: "저장하지 못했어요. 연결을 확인해 주세요." }));
+      return writeQueue;
     };
 
     return {
@@ -567,7 +568,7 @@ export function createPlannerStore(seed: PlannerSeed) {
       saveJournal: () => {
         const state = get();
         const ctx = context();
-        if (ctx) save(() => persistReflection(ctx, state.journal, state.mood));
+        return ctx ? save(() => persistReflection(ctx, state.journal, state.mood)) : Promise.resolve();
       },
       confirmPlan: () => {
         const state = get();

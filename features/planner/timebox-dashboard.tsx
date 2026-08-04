@@ -661,12 +661,32 @@ function JournalView() {
   const setJournal = usePlannerStore((state) => state.setJournal);
   const setMood = usePlannerStore((state) => state.setMood);
   const saveJournal = usePlannerStore((state) => state.saveJournal);
+  const [saving, setSaving] = useState(false);
   const first = useRef(true);
+  const saveSequence = useRef(0);
+
+  const saveNow = () => {
+    const sequence = ++saveSequence.current;
+    setSaving(true);
+    void Promise.all([
+      saveJournal(),
+      new Promise((resolve) => window.setTimeout(resolve, 450)),
+    ]).finally(() => {
+      if (saveSequence.current === sequence) setSaving(false);
+    });
+  };
 
   useEffect(() => {
     if (first.current) { first.current = false; return; }
     const timeout = window.setTimeout(() => {
-      saveJournal();
+      const sequence = ++saveSequence.current;
+      setSaving(true);
+      void Promise.all([
+        saveJournal(),
+        new Promise((resolve) => window.setTimeout(resolve, 450)),
+      ]).finally(() => {
+        if (saveSequence.current === sequence) setSaving(false);
+      });
     }, 900);
     return () => window.clearTimeout(timeout);
   }, [journal, mood, saveJournal]);
@@ -677,6 +697,7 @@ function JournalView() {
     <main className="journal-page">
       <div className="journal-topline">
         <div><p>DAILY JOURNAL</p><h1>{dateLabel(planDate)}</h1></div>
+        <div className="journal-save-indicator" data-saving={saving} title={saving ? "저장 중" : "저장 완료"} aria-label={saving ? "일기 저장 중" : "일기 저장 완료"}><Save size={17} /></div>
       </div>
       <div className="journal-sheet">
         <div className="mood-row" aria-label="오늘의 기분">
@@ -687,8 +708,8 @@ function JournalView() {
           <span>막막하면 한 줄부터</span>
           {["오늘 잘한 일", "감사한 일", "기분이 좋았던 순간", "몰입했던 순간"].map((prompt) => <button key={prompt} onClick={() => insertPrompt(prompt)}>{prompt}</button>)}
         </div>
-        <textarea value={journal} onChange={(event) => setJournal(event.target.value)} onBlur={saveJournal} placeholder={"오늘은 어떤 하루였나요?\n계획과 달랐던 순간, 느낀 감정, 내일 기억하고 싶은 것을 자유롭게 적어보세요."} aria-label="오늘의 일기" />
-        <footer><span>{journal.trim().length}자</span></footer>
+        <textarea value={journal} onChange={(event) => setJournal(event.target.value)} placeholder={"오늘은 어떤 하루였나요?\n계획과 달랐던 순간, 느낀 감정, 내일 기억하고 싶은 것을 자유롭게 적어보세요."} aria-label="오늘의 일기" />
+        <footer><span>{journal.trim().length}자</span><button onClick={saveNow} disabled={saving}><Save size={15} /> 저장하기</button></footer>
       </div>
     </main>
   );

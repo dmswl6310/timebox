@@ -3368,6 +3368,9 @@ textarea:focus-visible {
 
 /* Journal */
 .journal-page { width: min(920px, calc(100% - 40px)); }
+.journal-save-indicator { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid #d8ddd6; border-radius: 50%; background: #f8faf6; color: #52685a; }
+.journal-save-indicator[data-saving="true"] svg { animation: journal-save-spin 850ms linear infinite; }
+@keyframes journal-save-spin { to { transform: rotate(360deg); } }
 .journal-sheet { overflow: hidden; border: 1px solid #d1d2cb; border-radius: 3px; background: #fffef8; box-shadow: 0 18px 50px rgba(48,51,46,.1); }
 .mood-row { display: flex; align-items: center; gap: 7px; padding: 16px 22px; border-bottom: 1px solid #d8d9d1; }
 .mood-row > span { margin-right: 6px; font-family: Georgia, serif; font-size: 12px; font-weight: 700; }
@@ -3380,7 +3383,7 @@ textarea:focus-visible {
 .journal-sheet textarea::placeholder { color: #a7aaa4; }
 .journal-sheet footer { display: flex; justify-content: flex-end; align-items: center; gap: 7px; padding: 12px 18px; border-top: 1px solid #d9dad3; background: #fafaf5; }
 .journal-sheet footer > span { margin-right: auto; color: #969994; font-size: 9px; }
-.journal-sheet footer button { display: flex; align-items: center; gap: 5px; height: 32px; padding: 0 11px; border: 1px solid #d7d9d2; border-radius: 7px; background: #fff; font-size: 9px; font-weight: 800; }
+.journal-sheet footer button { display: flex; align-items: center; gap: 5px; min-height: 40px; padding: 0 13px; border: 1px solid #d7d9d2; border-radius: 7px; background: #fff; font-size: 9px; font-weight: 800; }
 .journal-sheet footer button:first-of-type { border-color: #263f34; background: #263f34; color: #fff; }
 
 /* Records: summary + searchable activity archive */

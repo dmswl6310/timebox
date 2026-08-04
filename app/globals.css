@@ -3146,6 +3146,42 @@ textarea:focus-visible {
 .brain-tag-input { width: 88px; min-width: 0; }
 .brain-tag-help { display: block; padding: 0 8px 7px 30px; color: #8a8e88; font-size: 8px; line-height: 1.4; }
 
+.brain-search {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 40px;
+  align-items: center;
+  min-height: 40px;
+  margin: 8px 12px 2px;
+  padding-left: 10px;
+  border: 1px solid #d6d8d2;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .82);
+  color: #777b76;
+}
+
+.brain-search input {
+  min-width: 0;
+  height: 38px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #30352f;
+  font-size: 11px;
+}
+
+.brain-search input::placeholder { color: #969a94; }
+
+.brain-search button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  color: #777b76;
+}
+
+.brain-search button:hover { background: rgba(38, 63, 52, .08); color: #263f34; }
+
 .brain-list {
   min-height: 700px;
   padding: 4px 12px 40px;

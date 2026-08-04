@@ -44,6 +44,7 @@ import { dateInTimeZone, shiftIsoDate, startOfIsoWeek } from "@/lib/date";
 import { createContext, FormEvent, useContext, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { loadRecordBundle, type ActivityKind, type RecordBundle } from "./records-data";
+import { filterBrainDumpTasks, normalizeBrainDumpQuery } from "./brain-dump-search";
 import { PlannerStoreProvider, usePlannerStore, type PlannerSeed } from "./store";
 import { formatPlanTime, PLAN_END_HOUR } from "./planner-time";
 import { tagSuggestions } from "./tag-utils";
@@ -322,15 +323,23 @@ function PrioritySection() {
 function BrainDumpSection() {
   const tasks = usePlannerStore((state) => state.tasks);
   const availableTags = usePlannerStore((state) => state.availableTags);
+  const [query, setQuery] = useState("");
   const active = tasks.filter((task) => !task.completed);
+  const filteredTasks = filterBrainDumpTasks(tasks, query);
+  const searching = Boolean(normalizeBrainDumpQuery(query));
   const tagOptions = tagSuggestions([...availableTags, ...tasks.map((task) => task.tag)]);
   return (
     <section className="paper-section brain-note">
-      <div className="paper-section-title"><span>BRAIN DUMP</span><small>모든 생각 쏟아내기 · {active.length}</small></div>
+      <div className="paper-section-title"><span>BRAIN DUMP</span><small>{searching ? `검색 ${filteredTasks.length}/${active.length}` : `모든 생각 쏟아내기 · ${active.length}`}</small></div>
       <AddTaskForm tagOptions={tagOptions} />
+      <label className="brain-search">
+        <Search size={15} aria-hidden="true" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="할 일이나 태그 검색" aria-label="브레인덤프 검색" />
+        {query && <button type="button" onClick={() => setQuery("")} aria-label="브레인덤프 검색 지우기"><X size={15} /></button>}
+      </label>
       <div className="brain-list">
-        {active.length ? active.map((task) => <CompactTask key={task.id} task={task} tagOptions={tagOptions} />) : (
-          <div className="brain-empty"><Inbox size={22} /><p>완료하지 않은 일은 내일도 이곳에 남아요.</p></div>
+        {filteredTasks.length ? filteredTasks.map((task) => <CompactTask key={task.id} task={task} tagOptions={tagOptions} />) : (
+          <div className="brain-empty"><Inbox size={22} /><p>{searching ? "일치하는 할 일이나 태그가 없어요." : "완료하지 않은 일은 내일도 이곳에 남아요."}</p></div>
         )}
       </div>
     </section>

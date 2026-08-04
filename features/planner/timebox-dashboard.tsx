@@ -134,6 +134,16 @@ function isOutsideTimetable(position: { x: number; y: number }) {
   return position.x < rect.left || position.x > rect.right || position.y < rect.top || position.y > rect.bottom;
 }
 
+function dragEndPosition(event: DragEndEvent) {
+  const nativeEvent = event.nativeEvent;
+  if (nativeEvent && "clientX" in nativeEvent && "clientY" in nativeEvent) {
+    const x = Number(nativeEvent.clientX);
+    const y = Number(nativeEvent.clientY);
+    if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+  }
+  return event.operation.position.current;
+}
+
 function dateLabel(date: string) {
   return new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "short" }).format(new Date(`${date}T12:00:00`));
 }
@@ -1157,13 +1167,14 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
     const source = event.operation.source;
     const targetId = String(event.operation.target?.id ?? "");
     if (!source) return;
-    const pointerStart = minuteFromTimetablePosition(event.operation.position.current);
+    const endPosition = dragEndPosition(event);
+    const pointerStart = minuteFromTimetablePosition(endPosition);
     const targetStart = targetId.startsWith("slot:") ? Number(targetId.slice(5)) : null;
     const intent = resolvePlannerDropIntent(
       source.data.kind,
       pointerStart,
       targetStart,
-      isOutsideTimetable(event.operation.position.current),
+      isOutsideTimetable(endPosition),
     );
     if (intent.type === "ignore") return;
     if (intent.type === "remove") {

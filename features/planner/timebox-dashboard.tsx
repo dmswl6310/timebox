@@ -45,6 +45,7 @@ import { createContext, FormEvent, useContext, useEffect, useRef, useState, useS
 import { createClient } from "@/lib/supabase/client";
 import { loadRecordBundle, type ActivityKind, type RecordBundle } from "./records-data";
 import { filterBrainDumpTasks, normalizeBrainDumpQuery } from "./brain-dump-search";
+import { resolvePlannerDropIntent } from "./drag-drop-intent";
 import { PlannerStoreProvider, usePlannerStore, type PlannerSeed } from "./store";
 import { formatPlanTime, PLAN_END_HOUR } from "./planner-time";
 import { tagSuggestions } from "./tag-utils";
@@ -124,6 +125,13 @@ function minuteFromTimetablePosition(position: { x: number; y: number }) {
     return hour * 60 + quarter * 15;
   }
   return null;
+}
+
+function isOutsideTimetable(position: { x: number; y: number }) {
+  const timetable = document.querySelector<HTMLElement>(".timetable-section");
+  const rect = timetable?.getBoundingClientRect();
+  if (!rect) return false;
+  return position.x < rect.left || position.x > rect.right || position.y < rect.top || position.y > rect.bottom;
 }
 
 function dateLabel(date: string) {
@@ -360,7 +368,6 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
   const selectedBlockId = usePlannerStore((state) => state.selectedBlockId);
   const previewResizeBlock = usePlannerStore((state) => state.previewResizeBlock);
   const resizeBlock = usePlannerStore((state) => state.resizeBlock);
-  const removeBlock = usePlannerStore((state) => state.removeBlock);
   const requestChangeReason = useChangeReason();
   const hourStart = hour * 60;
   const start = Math.max(block.start, hourStart);
@@ -418,19 +425,6 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
     window.addEventListener("pointercancel", finish, { once: true });
   };
 
-  const deleteBlock = async (event: ReactMouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const reason = await reasonForChange(
-      planStatus,
-      requestChangeReason,
-      "일정에서 빼는 이유",
-      `‘${block.title}’ 타임블록을 일정에서 빼는 이유를 남겨 주세요. 작업은 브레인덤프에 남아요.`,
-    );
-    if (reason === null) return;
-    removeBlock(block.id, reason);
-  };
-
   return (
     <article
       ref={ref}
@@ -444,9 +438,7 @@ function BlockSegment({ block, hour, isLast }: { block: TimeBlock; hour: number;
       onClick={() => selectBlock(block.id)}
     >
       {planStatus !== "closed" && <button ref={handleRef} className="paper-block-drag" aria-label={`${block.title} 이동`} title="블록 몸통을 끌어서 이동"><GripVertical size={12} /></button>}
-      <span className="paper-block-title">{first && isMit && <Star className="paper-block-mit" size={11} fill="currentColor" />}{first ? block.title : "↳ 계속"}</span>
-      {first && <small>{formatTime(block.start)} · {formatDuration(block.duration)}</small>}
-      {first && planStatus !== "closed" && <button className="paper-block-delete" onClick={deleteBlock} aria-label={`${block.title} 일정에서 삭제`} title="일정에서 바로 빼기"><Trash2 size={11} /></button>}
+      <span className="paper-block-title">{first && isMit && <Star className="paper-block-mit" size={13} fill="currentColor" />}{block.title}</span>
       {isLast && planStatus !== "closed" && (
         <>
           <button className="paper-block-check" data-checked={block.status === "completed"} onClick={(event) => { event.stopPropagation(); toggleBlockComplete(block.id); }} aria-label="완료 전환">
@@ -1107,6 +1099,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   const router = useRouter();
   const scheduleTask = usePlannerStore((state) => state.scheduleTask);
   const moveBlock = usePlannerStore((state) => state.moveBlock);
+  const removeBlock = usePlannerStore((state) => state.removeBlock);
   const notice = usePlannerStore((state) => state.notice);
   const setNotice = usePlannerStore((state) => state.setNotice);
   const userId = usePlannerStore((state) => state.userId);
@@ -1166,8 +1159,24 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
     if (!source) return;
     const pointerStart = minuteFromTimetablePosition(event.operation.position.current);
     const targetStart = targetId.startsWith("slot:") ? Number(targetId.slice(5)) : null;
-    const start = pointerStart ?? targetStart;
-    if (start === null || !Number.isFinite(start)) return;
+    const intent = resolvePlannerDropIntent(
+      source.data.kind,
+      pointerStart,
+      targetStart,
+      isOutsideTimetable(event.operation.position.current),
+    );
+    if (intent.type === "ignore") return;
+    if (intent.type === "remove") {
+      const reason = await reasonForChange(
+        planStatus,
+        requestChangeReason,
+        "일정에서 빼는 이유",
+        `‘${String(source.data.title ?? "타임블록")}’ 블록을 일정에서 빼는 이유를 남겨 주세요. 작업은 브레인덤프에 남아요.`,
+      );
+      if (reason !== null) removeBlock(String(source.data.blockId), reason);
+      return;
+    }
+    const start = intent.start;
     if (source.data.kind === "task") {
       const reason = await reasonForChange(planStatus, requestChangeReason, "일정을 추가하는 이유", `‘${String(source.data.title ?? "작업")}’ 작업을 확정된 일정에 추가하는 이유를 남겨 주세요.`);
       if (reason !== null) scheduleTask(String(source.data.taskId), start, reason);

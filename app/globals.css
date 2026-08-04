@@ -3304,7 +3304,7 @@ textarea:focus-visible {
   min-width: 0;
   height: 50px;
   margin: 4px 2px;
-  padding: 5px 21px 4px 19px;
+  padding: 4px 21px 4px 19px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--block-color) 72%, #333);
   border-radius: 4px;
@@ -3323,13 +3323,9 @@ textarea:focus-visible {
 .paper-block[data-completed="true"] { opacity: .58; }
 .paper-block[data-completed="true"] .paper-block-title { text-decoration: line-through; }
 .paper-block-drag { position: absolute; left: 1px; top: 0; display: grid; place-items: center; width: 18px; height: 100%; background: transparent; color: color-mix(in srgb, var(--block-color) 70%, #555); cursor: grab; }
-.paper-block-title { display: block; overflow: hidden; font-size: 9.5px; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
-.paper-block small { display: block; margin-top: 3px; color: #6f756f; font-size: 7.5px; white-space: nowrap; }
+.paper-block-title { height: 100%; overflow: hidden; font-size: 12.5px; font-weight: 900; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .paper-block-check { position: absolute; top: 5px; right: 5px; display: grid; place-items: center; width: 14px; height: 14px; padding: 0; border: 1px solid color-mix(in srgb, var(--block-color) 70%, #777); border-radius: 50%; background: rgba(255,255,255,.6); }
 .paper-block-check[data-checked="true"] { background: #263f34; color: #fff; }
-.paper-block-delete { position: absolute; z-index: 7; right: 12px; bottom: 3px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; background: rgba(255,255,255,.76); color: #9d5b52; opacity: .62; }
-.paper-block-delete:hover,
-.paper-block[data-selected="true"] .paper-block-delete { background: #fff1ef; color: #a6483f; opacity: 1; }
 .timetable-end { display: grid; grid-template-columns: 54px 1fr; min-height: 30px; border-top: 1px solid #cfd1cb; background: #f8faf7; color: #70766f; }
 .timetable-end time { display: grid; place-items: start center; padding-top: 5px; border-right: 1px solid #cfd1cb; font-family: Georgia, serif; font-size: 10px; font-weight: 700; }
 .timetable-end span { padding: 7px 10px; font-size: 8px; font-weight: 800; }
@@ -3695,7 +3691,6 @@ button.month-day:hover { border-color: #aebcaf; background: #f1f5ef; }
 .paper-app[data-mode="paper"] .brain-add input,
 .paper-app[data-mode="paper"] .brain-add select,
 .paper-app[data-mode="paper"] .paper-block-title,
-.paper-app[data-mode="paper"] .paper-block small,
 .paper-app[data-mode="paper"] .planner-help,
 .paper-app[data-mode="paper"] .journal-sheet textarea {
   font-family: var(--handwriting);
@@ -3704,8 +3699,7 @@ button.month-day:hover { border-color: #aebcaf; background: #f1f5ef; }
 
 .paper-app[data-mode="paper"] .note-task-copy strong { font-size: 12px; font-weight: 600; }
 .paper-app[data-mode="paper"] .note-task-copy span { font-size: 10px; }
-.paper-app[data-mode="paper"] .paper-block-title { font-size: 11px; font-weight: 650; }
-.paper-app[data-mode="paper"] .paper-block small { font-size: 9px; }
+.paper-app[data-mode="paper"] .paper-block-title { font-size: 13px; font-weight: 700; }
 .paper-app[data-mode="paper"] .journal-sheet textarea { font-size: 17px; }
 
 /* The professional mode separates responsibilities into calm, modern cards. */

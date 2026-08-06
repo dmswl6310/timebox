@@ -395,13 +395,17 @@ describe("계획 상태 규칙", () => {
     expect(store.getState().isPlanEditing).toBe(true);
     expect(store.getState().hasPendingPlanChanges).toBe(true);
 
-    const finished = store.getState().finishPlanEdit("오후 약속에 맞춰 집중 시간을 재배치함");
+    const finished = store.getState().finishPlanEdit("오후 약속에 맞춰 집중 시간을 재배치함", "reprioritized");
 
     expect(finished).toBe(true);
     expect(store.getState().isPlanEditing).toBe(false);
     expect(store.getState().blocks[0]?.changeReasons).toMatchObject({
       moved: "오후 약속에 맞춰 집중 시간을 재배치함",
       resized: "오후 약속에 맞춰 집중 시간을 재배치함",
+    });
+    expect(store.getState().blocks[0]?.changeReasonKinds).toMatchObject({
+      moved: "reprioritized",
+      resized: "reprioritized",
     });
   });
 

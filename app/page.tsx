@@ -18,7 +18,12 @@ type HomeProps = { searchParams: Promise<{ date?: string | string[]; view?: stri
 
 function validInitialView(value: string | string[] | undefined) {
   const candidate = Array.isArray(value) ? value[0] : value;
-  return candidate === "journal" ? "journal" as const : "today" as const;
+  return candidate === "journal" || candidate === "review" ? "review" as const : "today" as const;
+}
+
+function validInitialReviewTab(value: string | string[] | undefined) {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return candidate === "journal" ? "journal" as const : "changes" as const;
 }
 
 export default async function Home({ searchParams }: HomeProps) {
@@ -32,6 +37,7 @@ export default async function Home({ searchParams }: HomeProps) {
       todayLabel={koreanDateLabel(planDate)}
       seed={seed}
       initialPage={validInitialView(params.view)}
+      initialReviewTab={validInitialReviewTab(params.view)}
     />
   );
 }

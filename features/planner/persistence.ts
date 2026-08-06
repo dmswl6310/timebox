@@ -37,6 +37,12 @@ function cleanChangeReasons(reasons?: TimeBlock["changeReasons"]) {
   return Object.keys(cleaned).length ? cleaned : undefined;
 }
 
+function cleanChangeReasonKinds(kinds?: TimeBlock["changeReasonKinds"]) {
+  if (!kinds) return undefined;
+  const cleaned = Object.fromEntries(Object.entries(kinds).filter(([, value]) => Boolean(value)));
+  return Object.keys(cleaned).length ? cleaned : undefined;
+}
+
 async function replaceTaskTag(
   context: PersistenceContext,
   task: Task,
@@ -207,6 +213,7 @@ export async function persistPriorities(context: PersistenceContext, taskIds: st
 export async function persistBlockCreate(context: PersistenceContext, block: TimeBlock) {
   const supabase = createClient();
   const changeReasons = cleanChangeReasons(block.changeReasons);
+  const changeReasonKinds = cleanChangeReasonKinds(block.changeReasonKinds);
   const { error } = await supabase.from("time_blocks").insert({
     id: block.id,
     user_id: context.userId,
@@ -218,6 +225,7 @@ export async function persistBlockCreate(context: PersistenceContext, block: Tim
     planned_end: toIso(context.planDate, block.start + block.duration),
     status: dbStatus(block.status),
     ...(changeReasons ? { change_reasons: changeReasons } : {}),
+    ...(changeReasonKinds ? { change_reason_kinds: changeReasonKinds } : {}),
   });
   assertSuccess(error);
 }
@@ -228,27 +236,36 @@ export async function persistBlockMove(
   start: number,
   duration: number,
   changeReasons?: TimeBlock["changeReasons"],
+  changeReasonKinds?: TimeBlock["changeReasonKinds"],
 ) {
   const supabase = createClient();
   const cleanedReasons = cleanChangeReasons(changeReasons);
+  const cleanedReasonKinds = cleanChangeReasonKinds(changeReasonKinds);
   const { error } = await supabase
     .from("time_blocks")
     .update({
       planned_start: toIso(context.planDate, start),
       planned_end: toIso(context.planDate, start + duration),
       ...(cleanedReasons ? { change_reasons: cleanedReasons } : {}),
+      ...(cleanedReasonKinds ? { change_reason_kinds: cleanedReasonKinds } : {}),
     })
     .eq("id", blockId)
     .eq("user_id", context.userId);
   assertSuccess(error);
 }
 
-export async function persistBlockCancel(context: PersistenceContext, blockId: string, changeReasons?: TimeBlock["changeReasons"]) {
+export async function persistBlockCancel(
+  context: PersistenceContext,
+  blockId: string,
+  changeReasons?: TimeBlock["changeReasons"],
+  changeReasonKinds?: TimeBlock["changeReasonKinds"],
+) {
   const supabase = createClient();
   const cleanedReasons = cleanChangeReasons(changeReasons);
+  const cleanedReasonKinds = cleanChangeReasonKinds(changeReasonKinds);
   const { error } = await supabase
     .from("time_blocks")
-    .update({ status: "cancelled", ...(cleanedReasons ? { change_reasons: cleanedReasons } : {}) })
+    .update({ status: "cancelled", ...(cleanedReasons ? { change_reasons: cleanedReasons } : {}), ...(cleanedReasonKinds ? { change_reason_kinds: cleanedReasonKinds } : {}) })
     .eq("id", blockId)
     .eq("user_id", context.userId);
   assertSuccess(error);
@@ -376,6 +393,7 @@ type PersistedBlockSnapshot = {
   baseline_end: string | null;
   status: string;
   change_reasons: Record<string, string> | null;
+  change_reason_kinds: TimeBlock["changeReasonKinds"] | null;
 };
 
 function minutesInPlanDay(iso: string, planDate: string, timezone: string) {
@@ -406,7 +424,7 @@ export async function persistPlanChangeSnapshot(context: PersistenceContext) {
   const supabase = createClient();
   const { data, error: readError } = await supabase
     .from("time_blocks")
-    .select("id,title,planned_start,planned_end,baseline_start,baseline_end,status,change_reasons")
+    .select("id,title,planned_start,planned_end,baseline_start,baseline_end,status,change_reasons,change_reason_kinds")
     .eq("daily_plan_id", context.dailyPlanId)
     .eq("user_id", context.userId);
   assertSuccess(readError);
@@ -415,24 +433,25 @@ export async function persistPlanChangeSnapshot(context: PersistenceContext) {
   const changes: Array<Record<string, unknown>> = [];
   for (const block of (data ?? []) as PersistedBlockSnapshot[]) {
     const reasons = block.change_reasons ?? {};
+    const reasonKinds = block.change_reason_kinds ?? {};
     const current = snapshotState(block, block.planned_start, block.planned_end, context);
     if (!block.baseline_start || !block.baseline_end) {
       if (block.status !== "cancelled") {
-        changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "created", before_state: null, after_state: current, reason: cleanChangeReason(reasons.created), created_at: createdAt });
+        changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "created", before_state: null, after_state: current, reason: cleanChangeReason(reasons.created), reason_kind: reasonKinds.created ?? null, created_at: createdAt });
       }
       continue;
     }
 
     const baseline = snapshotState(block, block.baseline_start, block.baseline_end, context);
     if (block.status === "cancelled") {
-      changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "cancelled", before_state: baseline, after_state: { status: "cancelled" }, reason: cleanChangeReason(reasons.cancelled), created_at: createdAt });
+      changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "cancelled", before_state: baseline, after_state: { status: "cancelled" }, reason: cleanChangeReason(reasons.cancelled), reason_kind: reasonKinds.cancelled ?? null, created_at: createdAt });
       continue;
     }
     if (baseline.start !== current.start) {
-      changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "moved", before_state: baseline, after_state: current, reason: cleanChangeReason(reasons.moved), created_at: createdAt });
+      changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "moved", before_state: baseline, after_state: current, reason: cleanChangeReason(reasons.moved), reason_kind: reasonKinds.moved ?? null, created_at: createdAt });
     }
     if (baseline.duration !== current.duration) {
-      changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "resized", before_state: baseline, after_state: current, reason: cleanChangeReason(reasons.resized), created_at: createdAt });
+      changes.push({ user_id: context.userId, daily_plan_id: context.dailyPlanId, time_block_id: block.id, change_type: "resized", before_state: baseline, after_state: current, reason: cleanChangeReason(reasons.resized), reason_kind: reasonKinds.resized ?? null, created_at: createdAt });
     }
   }
 

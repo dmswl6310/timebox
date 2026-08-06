@@ -1,6 +1,14 @@
 export type TagName = string;
 export type TaskColor = "coral" | "violet" | "blue" | "amber" | "green" | "slate";
 export type PlanStatus = "draft" | "committed" | "closed";
+export type ScheduleChangeType = "created" | "moved" | "resized" | "cancelled";
+export type ChangeReasonKind =
+  | "unexpected_delay"
+  | "deliberate_defer"
+  | "estimate_adjustment"
+  | "new_event"
+  | "reprioritized"
+  | "other";
 
 export type Task = {
   id: string;
@@ -23,7 +31,8 @@ export type TimeBlock = {
   duration: number;
   baselineStart?: number;
   baselineDuration?: number;
-  changeReasons?: Partial<Record<"created" | "moved" | "resized" | "cancelled", string>>;
+  changeReasons?: Partial<Record<ScheduleChangeType, string>>;
+  changeReasonKinds?: Partial<Record<ScheduleChangeType, ChangeReasonKind>>;
   actualMinutes?: number;
   type: BlockType;
   color: Task["color"];

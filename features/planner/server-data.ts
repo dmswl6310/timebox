@@ -113,7 +113,7 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
         .maybeSingle(),
       supabase
         .from("time_blocks")
-        .select("id,change_reasons")
+        .select("id,change_reasons,change_reason_kinds")
         .eq("user_id", userId)
         .eq("daily_plan_id", plan.id),
       supabase
@@ -195,6 +195,10 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
     ((blockReasonsResult.data ?? []) as Array<{ id: string; change_reasons: TimeBlock["changeReasons"] | null }>)
       .map((row) => [row.id, row.change_reasons ?? undefined] as const),
   );
+  const changeReasonKindsByBlock = new Map(
+    ((blockReasonsResult.data ?? []) as Array<{ id: string; change_reason_kinds: TimeBlock["changeReasonKinds"] | null }>)
+      .map((row) => [row.id, row.change_reason_kinds ?? undefined] as const),
+  );
   const actualByBlock = new Map<string, number>();
   for (const session of (sessionsResult.data ?? []) as SessionRow[]) {
     if (!session.ended_at) continue;
@@ -232,6 +236,7 @@ export async function getPlannerSeed(requestedPlanDate?: string): Promise<Planne
           )
         : undefined,
       changeReasons: changeReasonsByBlock.get(row.id),
+      changeReasonKinds: changeReasonKindsByBlock.get(row.id),
       actualMinutes: actualByBlock.get(row.id),
       type: row.kind,
       color: blockColor(row.kind, task),

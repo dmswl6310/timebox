@@ -44,13 +44,22 @@ import { useRouter } from "next/navigation";
 import { dateInTimeZone, shiftIsoDate, startOfIsoWeek } from "@/lib/date";
 import { createContext, FormEvent, useContext, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { loadRecordBundle, type ActivityKind, type RecordBundle } from "./records-data";
+import {
+  loadPlanChangeGroups,
+  loadRecordBundle,
+  type ActivityKind,
+  type ChangeEffect,
+  type ChangeReviewGroup,
+  type ChangeReviewItem,
+  type ChangeState,
+  type RecordBundle,
+} from "./records-data";
 import { filterBrainDumpTasks, normalizeBrainDumpQuery } from "./brain-dump-search";
 import { resolvePlannerDropIntent } from "./drag-drop-intent";
 import { PENDING_PLAN_CHANGE_REASON, PlannerStoreProvider, usePlannerStore, type PlannerSeed } from "./store";
 import { formatPlanTime, PLAN_END_HOUR } from "./planner-time";
 import { tagSuggestions } from "./tag-utils";
-import type { TagName, Task, TimeBlock } from "./types";
+import type { ChangeReasonKind, TagName, Task, TimeBlock } from "./types";
 
 const ESTIMATE_OPTIONS = [15, 30, 45, 60, 90, 120, 180] as const;
 const DAY_START_OPTIONS = [5, 6, 7, 8, 9, 10, 11, 12] as const;
@@ -61,12 +70,21 @@ const MOODS = [
   { label: "좋음", emoji: "🙂" },
   { label: "아주 좋음", emoji: "😄" },
 ];
+const CHANGE_REASON_KIND_OPTIONS: Array<{ value: ChangeReasonKind; label: string }> = [
+  { value: "unexpected_delay", label: "예상치 못하게 늦어짐" },
+  { value: "deliberate_defer", label: "일부러 뒤로 미룸" },
+  { value: "estimate_adjustment", label: "예상 시간 조정" },
+  { value: "new_event", label: "새 일정이 생김" },
+  { value: "reprioritized", label: "우선순위를 바꿈" },
+  { value: "other", label: "기타" },
+];
 
 function moodEmoji(value: number | null | undefined) {
   return value ? MOODS[value - 1]?.emoji ?? "" : "";
 }
 
-type Page = "today" | "journal" | "records";
+type Page = "today" | "review" | "records";
+type ReviewTab = "changes" | "journal";
 type ServiceMode = "professional" | "paper";
 type TimeGridResolution = 15 | 30;
 type RecordTab = "summary" | "activity";
@@ -80,7 +98,8 @@ type ShareLinkSummary = {
   createdAt: string;
 };
 
-type ChangeReasonRequest = (title: string, description: string) => Promise<string | null>;
+type ChangeReasonInput = { reason: string; kind: ChangeReasonKind };
+type ChangeReasonRequest = (title: string, description: string) => Promise<ChangeReasonInput | null>;
 const ChangeReasonContext = createContext<ChangeReasonRequest | null>(null);
 
 function useChangeReason() {
@@ -98,7 +117,11 @@ async function reasonForChange(
 ) {
   if (planStatus !== "committed") return undefined;
   if (isPlanEditing) return PENDING_PLAN_CHANGE_REASON;
-  return (await request(title, description)) ?? null;
+  return (await request(title, description))?.reason ?? null;
+}
+
+function reasonKindLabel(kind: ChangeReasonKind | null) {
+  return CHANGE_REASON_KIND_OPTIONS.find((option) => option.value === kind)?.label ?? "변경 이유";
 }
 
 const MODE_STORAGE_KEY = "timebox-service-mode";
@@ -622,12 +645,12 @@ function TodayView({ todayLabel, resolution }: { todayLabel: string; resolution:
       finishPlanEdit();
       return;
     }
-    const reason = await requestChangeReason(
+    const changeReason = await requestChangeReason(
       "이번 일정 변경 이유",
       "이번 변경 모드에서 추가·이동·크기 조정·삭제한 일정 전체에 공통으로 남길 이유를 적어 주세요.",
     );
-    if (!reason?.trim()) return;
-    finishPlanEdit(reason);
+    if (!changeReason) return;
+    finishPlanEdit(changeReason.reason, changeReason.kind);
   };
 
   return (
@@ -668,10 +691,108 @@ function TodayView({ todayLabel, resolution }: { todayLabel: string; resolution:
   );
 }
 
-function JournalView() {
+function changeTimeRange(state: ChangeState | null) {
+  if (state?.start === undefined || state.duration === undefined) return null;
+  return `${formatTime(state.start)}–${formatTime(state.start + state.duration)}`;
+}
+
+function effectLabel(item: ChangeReviewItem, effect: ChangeEffect) {
+  if (effect === "created") return "추가";
+  if (effect === "cancelled") return "삭제";
+  if (effect === "moved_later") return `${item.startDelta}분 늦어짐`;
+  if (effect === "moved_earlier") return `${Math.abs(item.startDelta)}분 당김`;
+  if (effect === "duration_increased") return `${item.durationDelta}분 늘림`;
+  return `${Math.abs(item.durationDelta)}분 줄임`;
+}
+
+function changeGroupFlow(group: ChangeReviewGroup) {
+  const moved = group.items.filter((item) => item.startDelta !== 0);
+  if (moved.length < 2) return null;
+  const delta = moved[0]?.startDelta ?? 0;
+  if (!delta || moved.some((item) => item.startDelta !== delta)) return null;
+  return `일정 ${moved.length}개가 모두 ${Math.abs(delta)}분 ${delta > 0 ? "늦어졌어요" : "당겨졌어요"}.`;
+}
+
+function ChangeGroupCard({ group, showDate = false }: { group: ChangeReviewGroup; showDate?: boolean }) {
+  const flow = changeGroupFlow(group);
+  return (
+    <article className="change-summary-card">
+      <header>
+        <div>{showDate && <time>{dateLabel(group.date)}</time>}<small>{reasonKindLabel(group.reasonKind)}</small><strong>{group.reason ?? "변경 이유가 기록되지 않았어요."}</strong></div>
+        <span>{group.items.length}개 일정</span>
+      </header>
+      {flow && <p className="change-flow"><History size={13} />{flow}</p>}
+      <div className="change-summary-items">
+        {group.items.map((item) => {
+          const before = changeTimeRange(item.before);
+          const after = changeTimeRange(item.after);
+          return (
+            <div className="change-summary-item" key={item.id}>
+              <strong>{item.title}</strong>
+              <div className="change-time-compare">
+                <span data-empty={!before}>{before ?? "없음"}</span>
+                <ChevronRight size={13} />
+                <span data-empty={!after}>{after ?? (item.effects.includes("cancelled") ? "삭제" : "없음")}</span>
+              </div>
+              <div className="change-effect-list">{item.effects.map((effect) => <span data-effect={effect} key={effect}>{effectLabel(item, effect)}</span>)}</div>
+            </div>
+          );
+        })}
+      </div>
+    </article>
+  );
+}
+
+function ChangeReviewPanel({ groups, loading, error }: { groups: ChangeReviewGroup[]; loading: boolean; error: string }) {
+  const effects = groups.flatMap((group) => group.items.flatMap((item) => item.effects.map((effect) => ({ effect, item }))));
+  const counts = ([
+    ["moved_later", "늦어진 일정"],
+    ["moved_earlier", "당긴 일정"],
+    ["duration_increased", "시간 늘림"],
+    ["duration_decreased", "시간 줄임"],
+    ["created", "추가"],
+    ["cancelled", "삭제"],
+  ] as const).map(([effect, label]) => ({ effect, label, count: effects.filter((item) => item.effect === effect).length })).filter((item) => item.count > 0);
+
+  if (loading) return <div className="review-state">계획 변화를 정리하고 있어요…</div>;
+  if (error) return <div className="review-state error">{error}</div>;
+  if (!groups.length) return <div className="review-empty"><CheckCircle2 size={22} /><strong>최초 계획에서 달라진 내용이 없어요.</strong><p>계획 확정 후 변경한 일정이 생기면 이동·시간 조정·추가·삭제를 여기에 정리해 드려요.</p></div>;
+
+  return (
+    <div className="change-review-panel">
+      <section className="change-overview">
+        <div><span>오늘의 계획 변화</span><strong>{groups.reduce((sum, group) => sum + group.items.length, 0)}개 일정</strong></div>
+        <div className="change-overview-chips">{counts.map((item) => <span data-effect={item.effect} key={item.effect}>{item.label} {item.count}</span>)}</div>
+      </section>
+      <div className="change-summary-list">{groups.map((group) => <ChangeGroupCard group={group} key={group.id} />)}</div>
+    </div>
+  );
+}
+
+function demoChangeGroups(planDate: string, blocks: TimeBlock[]): ChangeReviewGroup[] {
+  if (!blocks.some((block) => block.baselineStart !== undefined)) return [];
+  const items = blocks.flatMap<ChangeReviewItem>((block) => {
+    const before = block.baselineStart === undefined ? null : { title: block.title, start: block.baselineStart, duration: block.baselineDuration ?? block.duration };
+    const after = { title: block.title, start: block.start, duration: block.duration };
+    const startDelta = before ? after.start - (before.start ?? after.start) : 0;
+    const durationDelta = before ? after.duration - (before.duration ?? after.duration) : 0;
+    const effects: ChangeEffect[] = [];
+    if (!before) effects.push("created");
+    if (startDelta > 0) effects.push("moved_later");
+    if (startDelta < 0) effects.push("moved_earlier");
+    if (durationDelta > 0) effects.push("duration_increased");
+    if (durationDelta < 0) effects.push("duration_decreased");
+    return effects.length ? [{ id: block.id, title: block.title, before, after, effects, startDelta, durationDelta }] : [];
+  });
+  if (!items.length) return [];
+  const reason = blocks.flatMap((block) => Object.values(block.changeReasons ?? {})).find((value) => value && value !== PENDING_PLAN_CHANGE_REASON) ?? null;
+  const reasonKind = blocks.flatMap((block) => Object.values(block.changeReasonKinds ?? {})).find(Boolean) ?? null;
+  return [{ id: "demo-change-review", dailyPlanId: "demo-plan", date: planDate, occurredAt: `${planDate}T22:00:00+09:00`, reason, reasonKind, items }];
+}
+
+function JournalEditor() {
   const journal = usePlannerStore((state) => state.journal);
   const mood = usePlannerStore((state) => state.mood);
-  const planDate = usePlannerStore((state) => state.planDate);
   const setJournal = usePlannerStore((state) => state.setJournal);
   const setMood = usePlannerStore((state) => state.setMood);
   const saveJournal = usePlannerStore((state) => state.saveJournal);
@@ -708,12 +829,7 @@ function JournalView() {
   const insertPrompt = (prompt: string) => setJournal(`${journal}${journal.trim() ? "\n\n" : ""}${prompt}\n`);
 
   return (
-    <main className="journal-page">
-      <div className="journal-topline">
-        <div><p>DAILY JOURNAL</p><h1>{dateLabel(planDate)}</h1></div>
-        <div className="journal-save-indicator" data-saving={saving} title={saving ? "저장 중" : "저장 완료"} aria-label={saving ? "일기 저장 중" : "일기 저장 완료"}><Save size={17} /></div>
-      </div>
-      <div className="journal-sheet">
+    <div className="journal-sheet">
         <div className="mood-row" aria-label="오늘의 기분">
           <span>오늘의 기분</span>
           {MOODS.map(({ label, emoji }, index) => <button key={label} title={label} aria-label={label} data-active={mood === index + 1} onClick={() => setMood(index + 1)}>{emoji}</button>)}
@@ -723,8 +839,41 @@ function JournalView() {
           {["오늘 잘한 일", "감사한 일", "기분이 좋았던 순간", "몰입했던 순간"].map((prompt) => <button key={prompt} onClick={() => insertPrompt(prompt)}>{prompt}</button>)}
         </div>
         <textarea value={journal} onChange={(event) => setJournal(event.target.value)} placeholder={"오늘은 어떤 하루였나요?\n계획과 달랐던 순간, 느낀 감정, 내일 기억하고 싶은 것을 자유롭게 적어보세요."} aria-label="오늘의 일기" />
-        <footer><span>{journal.trim().length}자</span><button onClick={saveNow} disabled={saving}><Save size={15} /> 저장하기</button></footer>
+        <footer><span>{journal.trim().length}자</span><div className="journal-save-indicator" data-saving={saving} title={saving ? "저장 중" : "저장 완료"} aria-label={saving ? "일기 저장 중" : "일기 저장 완료"}><Save size={15} /></div><button onClick={saveNow} disabled={saving}><Save size={15} /> 저장하기</button></footer>
+    </div>
+  );
+}
+
+function ReviewView({ tab, onTabChange }: { tab: ReviewTab; onTabChange: (tab: ReviewTab) => void }) {
+  const userId = usePlannerStore((state) => state.userId);
+  const dailyPlanId = usePlannerStore((state) => state.dailyPlanId);
+  const planDate = usePlannerStore((state) => state.planDate);
+  const blocks = usePlannerStore((state) => state.blocks);
+  const [groups, setGroups] = useState<ChangeReviewGroup[]>([]);
+  const [loading, setLoading] = useState(Boolean(userId && dailyPlanId));
+  const [error, setError] = useState("");
+  const visibleGroups = userId ? groups : demoChangeGroups(planDate, blocks);
+
+  useEffect(() => {
+    if (!userId || !dailyPlanId) return;
+    let active = true;
+    loadPlanChangeGroups(userId, dailyPlanId, planDate)
+      .then((result) => { if (active) setGroups(result); })
+      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "계획 변화를 불러오지 못했어요."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [dailyPlanId, planDate, userId]);
+
+  return (
+    <main className="journal-page review-page">
+      <div className="journal-topline">
+        <div><p>DAILY REVIEW</p><h1>{dateLabel(planDate)} 회고</h1></div>
       </div>
+      <div className="review-tabs" role="tablist" aria-label="회고 내용">
+        <button role="tab" aria-selected={tab === "changes"} data-active={tab === "changes"} onClick={() => onTabChange("changes")}><History size={15} /> 계획 변화</button>
+        <button role="tab" aria-selected={tab === "journal"} data-active={tab === "journal"} onClick={() => onTabChange("journal")}><BookOpenText size={15} /> 일기</button>
+      </div>
+      {tab === "changes" ? <ChangeReviewPanel groups={visibleGroups} loading={loading} error={error} /> : <JournalEditor />}
     </main>
   );
 }
@@ -777,14 +926,18 @@ function MonthHistory({
 function ChangeReasonDialog({
   title,
   description,
+  kind,
   value,
+  onKindChange,
   onChange,
   onCancel,
   onSubmit,
 }: {
   title: string;
   description: string;
+  kind: ChangeReasonKind | null;
   value: string;
+  onKindChange: (kind: ChangeReasonKind) => void;
   onChange: (value: string) => void;
   onCancel: () => void;
   onSubmit: () => void;
@@ -794,10 +947,14 @@ function ChangeReasonDialog({
       <section className="reason-dialog" role="dialog" aria-modal="true" aria-labelledby="change-reason-title">
         <header><div><History size={18} /><div><h2 id="change-reason-title">{title}</h2><p>{description}</p></div></div><button onClick={onCancel} aria-label="변경 이유 입력 취소"><X size={17} /></button></header>
         <form onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+          <fieldset className="reason-kinds">
+            <legend>어떤 성격의 변경인가요?</legend>
+            <div>{CHANGE_REASON_KIND_OPTIONS.map((option) => <button type="button" data-active={kind === option.value} onClick={() => onKindChange(option.value)} key={option.value}>{option.label}</button>)}</div>
+          </fieldset>
           <label htmlFor="change-reason">변경 이유</label>
           <textarea id="change-reason" value={value} onChange={(event) => onChange(event.target.value)} maxLength={500} autoFocus placeholder="예: 예상보다 자료 검토가 더 필요해서 시간을 늘렸어요." />
           <small>{value.length}/500 · 변경을 확정하면 최초 계획과 달라진 내용에 함께 기록돼요.</small>
-          <div><button type="button" className="reason-cancel" onClick={onCancel}>취소</button><button type="submit" className="reason-submit" disabled={!value.trim()}>이유 저장하고 변경</button></div>
+          <div><button type="button" className="reason-cancel" onClick={onCancel}>취소</button><button type="submit" className="reason-submit" disabled={!kind || !value.trim()}>이유 저장하고 변경</button></div>
         </form>
       </section>
     </div>
@@ -978,6 +1135,7 @@ function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journ
       journal,
       changeCount: blocks.filter((block) => block.baselineStart !== undefined && (block.start !== block.baselineStart || block.duration !== block.baselineDuration)).length,
     }],
+    changeGroups: demoChangeGroups(planDate, blocks),
     tagMinutes: [...tagMinutes].map(([tag, minutes]) => ({ tag, date: planDate, ...minutes })),
     activities: [
       ...(changeLines.length ? [{
@@ -1002,7 +1160,7 @@ function demoRecords(planDate: string, tasks: Task[], blocks: TimeBlock[], journ
   };
 }
 
-function RecordsView({ onOpenRecord }: { onOpenRecord: (date: string, destination: "today" | "journal") => void }) {
+function RecordsView({ onOpenRecord }: { onOpenRecord: (date: string, destination: "today" | "changes" | "journal") => void }) {
   const userId = usePlannerStore((state) => state.userId);
   const planDate = usePlannerStore((state) => state.planDate);
   const tasks = usePlannerStore((state) => state.tasks);
@@ -1075,7 +1233,7 @@ function RecordsView({ onOpenRecord }: { onOpenRecord: (date: string, destinatio
   const activities = bundle.activities.filter((activity) => isInPeriod(activity.date));
   const normalizedQuery = query.trim().toLocaleLowerCase("ko");
   const matches = (normalizedQuery ? bundle.activities : activities).filter((activity) => !normalizedQuery || `${activity.title} ${activity.detail} ${activity.date}`.toLocaleLowerCase("ko").includes(normalizedQuery));
-  const changeActivities = activities.filter((activity) => activity.kind === "change");
+  const changeGroups = bundle.changeGroups.filter((group) => isInPeriod(group.date));
   const planned = days.reduce((sum, day) => sum + day.plannedMinutes, 0);
   const actual = days.reduce((sum, day) => sum + day.actualMinutes, 0);
   const complete = days.reduce((sum, day) => sum + day.completedBlocks, 0);
@@ -1178,12 +1336,9 @@ function RecordsView({ onOpenRecord }: { onOpenRecord: (date: string, destinatio
       )}
 
       {!query.trim() && tab === "activity" && (
-        <section className="activity-feed change-feed">
-          <header><div><History size={16} /><strong>최초 계획에서 달라진 내용</strong></div><p>확정 전 작성 과정은 제외하고, 변경 모드에서 확정한 차이와 이유만 보여줘요.</p></header>
-          {changeActivities.length ? changeActivities.map((activity, index) => {
-            const [reason, ...changeLines] = activity.detail.split("\n");
-            return <article key={activity.id}><div className="activity-date">{index === 0 || changeActivities[index - 1].date !== activity.date ? dateLabel(activity.date) : ""}</div><span className="activity-icon" data-kind={activity.kind}>{activityIcon(activity.kind)}</span><div><time>{new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(new Date(activity.occurredAt))}</time><strong>{activity.title}</strong><div className="change-reason"><span>왜 바뀌었나요</span><p>{reason.replace(/^변경 이유 · /, "")}</p></div><ul className="change-lines">{changeLines.map((line) => <li key={line}>{line.replace(/^•\s*/, "")}</li>)}</ul><button className="record-open" onClick={() => onOpenRecord(activity.date, "today")}>이날 일정 열기<ChevronRight size={13} /></button></div></article>;
-          }) : <p className="no-records">선택한 기간에는 확정 후 변경한 일정이 없어요.</p>}
+        <section className="activity-feed change-feed summary-change-feed">
+          <header><div><History size={16} /><strong>계획 변화 요약</strong></div><p>같은 이유로 바뀐 일정을 묶고, 최초 계획과 최종 결과만 비교해요.</p></header>
+          {changeGroups.length ? changeGroups.map((group) => <div className="record-change-group" key={group.id}><ChangeGroupCard group={group} showDate /><button className="record-open" onClick={() => onOpenRecord(group.date, "changes")}>이날 회고 열기<ChevronRight size={13} /></button></div>) : <p className="no-records">선택한 기간에는 확정 후 변경한 일정이 없어요.</p>}
         </section>
       )}
     </main>
@@ -1194,13 +1349,13 @@ function AppNav({ page, setPage }: { page: Page; setPage: (page: Page) => void }
   return (
     <nav className="paper-nav" aria-label="주요 메뉴">
       <button data-active={page === "today"} onClick={() => setPage("today")}><CalendarDays size={16} /> 오늘</button>
-      <button data-active={page === "journal"} onClick={() => setPage("journal")}><BookOpenText size={16} /> 일기</button>
+      <button data-active={page === "review"} onClick={() => setPage("review")}><NotebookPen size={16} /> 회고</button>
       <button data-active={page === "records"} onClick={() => setPage("records")}><History size={16} /> 기록</button>
     </nav>
   );
 }
 
-function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string; initialPage: Page }) {
+function TimeboxDashboardInner({ todayLabel, initialPage, initialReviewTab }: { todayLabel: string; initialPage: Page; initialReviewTab: ReviewTab }) {
   const router = useRouter();
   const scheduleTask = usePlannerStore((state) => state.scheduleTask);
   const moveBlock = usePlannerStore((state) => state.moveBlock);
@@ -1218,6 +1373,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   const planStatus = usePlannerStore((state) => state.planStatus);
   const isPlanEditing = usePlannerStore((state) => state.isPlanEditing);
   const [page, setPage] = useState<Page>(initialPage);
+  const [reviewTab, setReviewTab] = useState<ReviewTab>(initialReviewTab);
   const serviceMode = useSyncExternalStore(subscribeServiceMode, getServiceModeSnapshot, () => "paper" as ServiceMode);
   const gridResolution = useSyncExternalStore(subscribeGridResolution, getGridResolutionSnapshot, () => 30 as TimeGridResolution);
   const [draggingBlock, setDraggingBlock] = useState(false);
@@ -1229,28 +1385,34 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
   const [shareError, setShareError] = useState("");
   const [revokingShareId, setRevokingShareId] = useState<string | null>(null);
   const [shareManagerNow, setShareManagerNow] = useState(0);
-  const [reasonPrompt, setReasonPrompt] = useState<{ title: string; description: string; resolve: (reason: string | null) => void } | null>(null);
+  const [reasonPrompt, setReasonPrompt] = useState<{ title: string; description: string; resolve: (reason: ChangeReasonInput | null) => void } | null>(null);
+  const [reasonKind, setReasonKind] = useState<ChangeReasonKind | null>(null);
   const [reasonText, setReasonText] = useState("");
   const requestChangeReason: ChangeReasonRequest = (title, description) => new Promise((resolve) => {
     setReasonText("");
+    setReasonKind(null);
     setReasonPrompt({ title, description, resolve });
   });
-  const finishReasonPrompt = (reason: string | null) => {
+  const finishReasonPrompt = (reason: ChangeReasonInput | null) => {
     const prompt = reasonPrompt;
     if (!prompt) return;
     setReasonPrompt(null);
     setReasonText("");
-    prompt.resolve(reason?.trim() || null);
+    setReasonKind(null);
+    prompt.resolve(reason);
   };
   const openPage = (nextPage: Page) => {
+    if (nextPage === "review") setReviewTab("changes");
     setPage(nextPage);
   };
 
-  const openRecord = (date: string, destination: "today" | "journal") => {
-    setPage(destination);
+  const openRecord = (date: string, destination: "today" | "changes" | "journal") => {
+    const nextPage = destination === "today" ? "today" : "review";
+    setPage(nextPage);
+    if (destination !== "today") setReviewTab(destination);
     if (!userId) return;
-    const query = destination === "journal" ? `?date=${date}&view=journal` : `?date=${date}`;
-    if (date !== planDate || destination === "journal") router.push(`/${query}`);
+    const query = destination === "today" ? `?date=${date}` : `?date=${date}&view=${destination === "journal" ? "journal" : "review"}`;
+    if (date !== planDate || destination !== "today") router.push(`/${query}`);
   };
 
   const changeServiceMode = (mode: ServiceMode) => {
@@ -1371,6 +1533,7 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
       if (event.key === "Escape") {
         setReasonPrompt(null);
         setReasonText("");
+        setReasonKind(null);
         reasonPrompt.resolve(null);
       }
     };
@@ -1459,12 +1622,12 @@ function TimeboxDashboardInner({ todayLabel, initialPage }: { todayLabel: string
           </div>
         </header>
         {page === "today" && <TodayView todayLabel={todayLabel} resolution={gridResolution} />}
-        {page === "journal" && <JournalView />}
+        {page === "review" && <ReviewView tab={reviewTab} onTabChange={setReviewTab} />}
         {page === "records" && <RecordsView onOpenRecord={openRecord} />}
         <AppNav page={page} setPage={openPage} />
         <ShareManager open={sharePanelOpen} loading={shareLinksLoading} creating={sharing} revokingId={revokingShareId} now={shareManagerNow} demo={!userId} error={shareError} shares={shareLinks} onClose={() => setSharePanelOpen(false)} onCreate={shareSchedule} onRevoke={revokeShare} />
         <ProfilePanel open={profilePanelOpen} email={userEmail} demo={!userId} tags={availableTags} mode={serviceMode} dayStartHour={dayStartHour} gridResolution={gridResolution} onClose={() => setProfilePanelOpen(false)} onAddTag={addTag} onModeChange={changeServiceMode} onDayStartHourChange={setDayStartHour} onGridResolutionChange={changeGridResolution} onSignOut={signOut} />
-        {reasonPrompt && <ChangeReasonDialog title={reasonPrompt.title} description={reasonPrompt.description} value={reasonText} onChange={setReasonText} onCancel={() => finishReasonPrompt(null)} onSubmit={() => finishReasonPrompt(reasonText)} />}
+        {reasonPrompt && <ChangeReasonDialog title={reasonPrompt.title} description={reasonPrompt.description} kind={reasonKind} value={reasonText} onKindChange={setReasonKind} onChange={setReasonText} onCancel={() => finishReasonPrompt(null)} onSubmit={() => reasonKind && reasonText.trim() ? finishReasonPrompt({ reason: reasonText.trim(), kind: reasonKind }) : undefined} />}
         {notice && <div className="toast" role="status"><CheckCircle2 size={17} /> {notice}<button onClick={() => setNotice(null)} aria-label="알림 닫기"><X size={15} /></button></div>}
         {draggingBlock && <div className="schedule-delete-guide" role="status" aria-live="polite"><Trash2 size={20} /><div><strong>일정표 밖에 놓으면 삭제</strong><span>할 일은 브레인덤프에 그대로 남아요</span></div></div>}
         <DragOverlay className="drag-overlay" dropAnimation={null}>{(source) => <div className="drag-preview"><GripVertical size={15} /><span>{String(source.data.title ?? "타임블록")}</span></div>}</DragOverlay>
@@ -1478,10 +1641,12 @@ export function TimeboxDashboard({
   todayLabel,
   seed,
   initialPage = "today",
+  initialReviewTab = "changes",
 }: {
   todayLabel: string;
   seed: PlannerSeed;
   initialPage?: Page;
+  initialReviewTab?: ReviewTab;
 }) {
-  return <PlannerStoreProvider key={`${seed.dailyPlanId ?? seed.planDate}-${initialPage}`} seed={seed}><TimeboxDashboardInner todayLabel={todayLabel} initialPage={initialPage} /></PlannerStoreProvider>;
+  return <PlannerStoreProvider key={`${seed.dailyPlanId ?? seed.planDate}-${initialPage}-${initialReviewTab}`} seed={seed}><TimeboxDashboardInner todayLabel={todayLabel} initialPage={initialPage} initialReviewTab={initialReviewTab} /></PlannerStoreProvider>;
 }

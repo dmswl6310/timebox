@@ -23,7 +23,7 @@ import {
 } from "./persistence";
 import { colorForTag, normalizeTagName, tagSuggestions } from "./tag-utils";
 import { PLAN_END_MINUTES } from "./planner-time";
-import type { MobileView, PlanStatus, TagName, Task, TimeBlock } from "./types";
+import type { ChangeReasonKind, MobileView, PlanStatus, TagName, Task, TimeBlock } from "./types";
 
 export type PlannerSeed = {
   userId: string | null;
@@ -103,7 +103,7 @@ export type PlannerState = PlannerSeed & {
   saveJournal: () => Promise<void>;
   confirmPlan: () => void;
   beginPlanEdit: () => void;
-  finishPlanEdit: (reason?: string) => boolean;
+  finishPlanEdit: (reason?: string, reasonKind?: ChangeReasonKind) => boolean;
   setNotice: (value: string | null) => void;
 };
 
@@ -122,6 +122,17 @@ function finalizeReasons(reasons: TimeBlock["changeReasons"], reason: string) {
   return Object.fromEntries(
     Object.entries(reasons).map(([kind, value]) => [kind, value === PENDING_PLAN_CHANGE_REASON ? reason : value]),
   ) as TimeBlock["changeReasons"];
+}
+
+function finalizeReasonKinds(
+  reasons: TimeBlock["changeReasons"],
+  existingKinds: TimeBlock["changeReasonKinds"],
+  reasonKind: ChangeReasonKind,
+) {
+  if (!reasons) return existingKinds;
+  return Object.fromEntries(
+    Object.entries(reasons).map(([kind, value]) => [kind, value === PENDING_PLAN_CHANGE_REASON ? reasonKind : existingKinds?.[kind as keyof typeof existingKinds]]),
+  ) as TimeBlock["changeReasonKinds"];
 }
 
 function overlaps(blocks: TimeBlock[], start: number, duration: number, ignoredBlockId?: string) {
@@ -585,6 +596,7 @@ export function createPlannerStore(seed: PlannerSeed) {
           baselineStart: block.start,
           baselineDuration: block.duration,
           changeReasons: undefined,
+          changeReasonKinds: undefined,
         }));
         set({
           blocks,
@@ -609,7 +621,7 @@ export function createPlannerStore(seed: PlannerSeed) {
         }
         set({ isPlanEditing: true, hasPendingPlanChanges: false, pendingCancelledBlocks: [], notice: "변경 모드예요. 여러 일정을 조정한 뒤 ‘변경 확정’을 눌러 주세요." });
       },
-      finishPlanEdit: (reason) => {
+      finishPlanEdit: (reason, reasonKind = "other") => {
         const state = get();
         if (!state.isPlanEditing) return false;
         if (!state.hasPendingPlanChanges) {
@@ -624,10 +636,15 @@ export function createPlannerStore(seed: PlannerSeed) {
 
         const changedBlocks = state.blocks.filter((block) => hasPendingReason(block.changeReasons));
         const blocks = state.blocks.map((block) => hasPendingReason(block.changeReasons)
-          ? { ...block, changeReasons: finalizeReasons(block.changeReasons, cleanReason) }
+          ? {
+              ...block,
+              changeReasonKinds: finalizeReasonKinds(block.changeReasons, block.changeReasonKinds, reasonKind),
+              changeReasons: finalizeReasons(block.changeReasons, cleanReason),
+            }
           : block);
         const cancelledBlocks = state.pendingCancelledBlocks.map((block) => ({
           ...block,
+          changeReasonKinds: finalizeReasonKinds(block.changeReasons, block.changeReasonKinds, reasonKind),
           changeReasons: finalizeReasons(block.changeReasons, cleanReason),
         }));
         set({
@@ -642,10 +659,10 @@ export function createPlannerStore(seed: PlannerSeed) {
         if (ctx) {
           for (const changed of changedBlocks) {
             const finalized = blocks.find((block) => block.id === changed.id);
-            if (finalized) save(() => persistBlockMove(ctx, finalized.id, finalized.start, finalized.duration, finalized.changeReasons));
+            if (finalized) save(() => persistBlockMove(ctx, finalized.id, finalized.start, finalized.duration, finalized.changeReasons, finalized.changeReasonKinds));
           }
           for (const cancelled of cancelledBlocks) {
-            save(() => persistBlockCancel(ctx, cancelled.id, cancelled.changeReasons));
+            save(() => persistBlockCancel(ctx, cancelled.id, cancelled.changeReasons, cancelled.changeReasonKinds));
           }
           save(() => persistPlanChangeSnapshot(ctx).then(() => undefined));
         }
